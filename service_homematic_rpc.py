@@ -470,7 +470,8 @@ class HomematicDataService:
                 return True # Successful fetch (of nothing)
 
             # If we have devices in the list, proceed to fetch levels
-            print(f"HomematicService: Fetching levels for {len(valve_list_to_process)} valve devices...")
+            if DEBUG>0:
+                print(f"HomematicService: Fetching levels for {len(valve_list_to_process)} valve devices...")
             self.valve_devices = len(valve_list_to_process)
             total_position = 0.0
             report_count = 0

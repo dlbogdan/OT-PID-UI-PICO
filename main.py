@@ -181,7 +181,7 @@ def main():
              display.load_custom_chars(CUSTOM_CHARS)
 
         display.show_message("System Booting", "Please wait...")
-        led.direct_send_color("yellow") # Indicate booting
+        led.direct_send_color("red") # Indicate booting
         print("Hardware Initialized.")
 
     except Exception as e:
