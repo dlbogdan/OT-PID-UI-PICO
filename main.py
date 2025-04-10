@@ -224,10 +224,8 @@ def main():
         reset()
 
     try:
-        # This line you added previously is incorrect syntax for SimplePage
-        # monitor_page = Page(f"Wifi IP"+lambda: wifi_service.get_ip() or "Disconnected", f"CCU Status"+lambda: "Connected" if homematic_service.is_ccu_connected() else "Not Connected")
-
-        root_menu = Menu("Main Menu", [
+        # Build the list of menu items conditionally
+        menu_items = [
             Menu("Network", [
                 TextField("WiFi SSID", ssid, lambda v: save_config_callback("WIFI", "SSID", v)),
                 TextField("WiFi Pass", wifi_pass, lambda v: save_config_callback("WIFI", "PASS", v)),
@@ -237,27 +235,30 @@ def main():
                 TextField("CCU3 User", ccu_user, lambda v: save_config_callback("CCU3", "USER", v)),
                 TextField("CCU3 Pass", ccu_pass, lambda v: save_config_callback("CCU3", "PASS", v)),
                 TextField("Valve Type", valve_type, lambda v: save_config_callback("CCU3", "VALVE_DEVTYPE", v)),
-                Action("Rescan Homematic", lambda: homematic_service.force_rescan()),
-            ]),
-            Menu("Numbers", [
-                IntField("Test Int", test_int, lambda v: save_config_callback("TEST", "INT", v)),
-                FloatField("Test Float", test_float, lambda v: save_config_callback("TEST", "FLOAT", v)),
-                BoolField("Test Bool", test_bool, lambda v: save_config_callback("TEST", "BOOL", v)),
+                Action("> Rescan", lambda: homematic_service.force_rescan()),
             ]),
             Menu("Device", [
-                Action("Reboot Device", reset),
-                Action("Save & Reboot", save_and_reboot),
-                Action("Factory Reset", lambda: factory_reset(display, led, config, homematic_service)),
+                Action("> Reboot Device", reset),
+                Action("> Save & Reboot", save_and_reboot),
+                Action("> Factory defaults", lambda: factory_reset(display, led, config, homematic_service)),
             ]),
-            Menu("Debug", [
-                Action("Corrupt session_id", lambda: corrupt_hm_session()),
-                Action("Force wifi disconnect", lambda: wifi_service.disconnect()),
-            ]),
-            # Add a Field to display WiFi IP (non-editable)
-            TextField("WiFi IP", lambda: wifi_service.get_ip() or "Disconnected", editable=False),
-            # Add a Field to display CCU status (non-editable)
-            TextField("CCU Status", lambda: "Connected" if homematic_service.is_ccu_connected() else "Not Connected", editable=False),
-        ])
+        ]
+
+        # Conditionally add the Debug menu
+        if DEBUG>0:
+            menu_items.append(
+                Menu("Debug", [
+                   Action("> Corrupt session_id", lambda: corrupt_hm_session()),
+                   Action("> Force wifi disconnect", lambda: wifi_service.disconnect()),
+                ])
+            )
+
+        # Add non-menu items (if any were planned here - currently none in your structure)
+        # Example: menu_items.append(TextField(...))
+
+        # Create the root menu with the constructed list
+        root_menu = Menu("Main Menu", menu_items)
+
         print("Menu Structure Built.")
     except Exception as e:
          handle_fatal_error("MenuError", display, led, str(e))

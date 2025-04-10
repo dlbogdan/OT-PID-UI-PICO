@@ -1,4 +1,4 @@
-DEBUG = 2
+DEBUG = 0
 
 # Debug levels:
 # 0: No debug output
