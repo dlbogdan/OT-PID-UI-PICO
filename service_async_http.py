@@ -7,8 +7,11 @@ import gc
 # import socket
 import errno
 # import _thread # No longer needed for get_ident here
-import asyncio # <<< ADD ASYNCIO IMPORT
+import asyncio # <<< ADDSYNCIO IMPORT
 from flags import *
+from manager_error import ErrorManager
+
+error_manager = ErrorManager()
 
 try:
     import ssl as tls # Standard library name
@@ -65,8 +68,7 @@ class JsonRpcClient:
         reader = None
         writer = None
         start_urlopen = time.ticks_ms()
-        if DEBUG>0:
-            print(f"Async _urlopen: Starting request to {self.host}:{self.port}{path}{data}") # Debug
+        error_manager.log_info(f"Async _urlopen: Starting request to {self.host}:{self.port}{path}{data}")
 
         try:
             # --- Use asyncio streams ---
@@ -197,7 +199,7 @@ class JsonRpcClient:
                         break # EOF
                     body += chunk
 
-            # print(f"Async _urlopen: Request finished successfully.") # Debug
+            error_manager.log_info("Async _urlopen: Request finished successfully.")
             return status_code, resp_headers, body.decode()
 
         # --- Error Handling ---
@@ -254,7 +256,7 @@ class JsonRpcClient:
             payload["params"] = params
 
         payload_json = json.dumps(payload)
-        # print(f"Async RPC Request > Method: {jsonrpc_method}, ID: {id_val}") # Debug
+        error_manager.log_info(f"Async RPC Request > Method: {jsonrpc_method}, ID: {id_val}")
 
         attempt = 0
         while True:
@@ -267,7 +269,7 @@ class JsonRpcClient:
                     response_data = json.loads(body)
                     if "error" in response_data and response_data["error"]:
                         print(f"AsyncJsonRpcClient Error: Received JSON-RPC error: {response_data['error']}")
-                    # print(f"Async RPC Response < ID: {id_val}, Status: {status_code}") # Debug
+                    error_manager.log_info(f"Async RPC Response < ID: {id_val}, Status: {status_code}")
                     return response_data # Success or RPC-level error contained within
                 except ValueError:
                     print(f"AsyncJsonRpcClient Error: Response status 200 but body is not valid JSON.")

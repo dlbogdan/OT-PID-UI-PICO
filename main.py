@@ -7,9 +7,10 @@ from gui import (  # Import the refactored components
     GUIManager, NavigationMode, EditingMode,
     Menu, IntField, FloatField, BoolField, Action, Field, IPAddressField, TextField,
     MonitoringMode, # <-- Import MonitoringMode
-    Page    # <-- Import SimplePage
+    Page, LogView    # <-- Import SimplePage
 )
 from manager_error import ErrorManager
+
 from machine import reset
 from manager_config import ConfigManager        # Config file manager
 from manager_wifi import WiFiManager
@@ -35,7 +36,7 @@ def handle_fatal_error(error_type, display, led, message, traceback=None):
         # Use direct_send_color as LED might not be updating anymore
         if led: led.direct_send_color("red")
     except Exception as e:
-        print(f"Error during fatal error handling display: {e}")
+        error_manager.log_error(f"Error during fatal error handling display: {e}")
     time.sleep(2)
     if not DEVELOPMENT_MODE:
         reset()
@@ -56,7 +57,7 @@ async def wifi_update(wifi_service: WiFiManager):
         try:
             wifi_service.update()
         except Exception as e:
-            print(f"Error in wifi_update: {e}")
+            error_manager.log_error(f"Error in wifi_update: {e}")
         await asyncio.sleep(5) # Check WiFi status every 5 seconds
 
 # gui_update is no longer needed, GUIManager handles rendering via events/modes
@@ -69,7 +70,7 @@ async def led_update(led):
         try:
             led.update()
         except Exception as e:
-            print(f"Error in led_update: {e}")
+            error_manager.log_error(f"Error in led_update: {e}")
         await asyncio.sleep_ms(100) # Update LED state relatively frequently
 
 async def hm_data_update(homematic_service: HomematicDataService):
@@ -79,7 +80,7 @@ async def hm_data_update(homematic_service: HomematicDataService):
              # update() now decides *when* to fetch based on internal timer and paused state
             homematic_service.update()
         except Exception as e:
-            print(f"Error in hm_data_update: {e}")
+            error_manager.log_error(f"Error in hm_data_update: {e}")
         await asyncio.sleep(5) # Check if fetch is needed every 5 seconds
 
 async def safe_task(coro, display, led):
@@ -118,6 +119,28 @@ async def poll_buttons(hid_controller: HIDController):
     while True:
         hid_controller.get_event() # This checks hardware and notifies observers if needed
         await asyncio.sleep_ms(20) # Poll reasonably fast, but yield control
+
+
+async def monitor_error_rate_limiter(homematic_service: HomematicDataService, wifi_service: WiFiManager, led):
+    """Monitors the error rate limiter and pauses tasks if triggered."""
+    while True:
+        if error_manager.error_rate_limiter_reached:
+            # Pause Homematic and WiFi services
+            homematic_service.set_paused(True)
+            wifi_service.disconnect()
+
+            # Set LED to solid red
+            led.set_color("red", blink=False)
+
+            # Wait until the error rate limiter is reset
+            while error_manager.error_rate_limiter_reached:
+                await asyncio.sleep(1)
+
+            # Resume services once the limiter is reset
+            homematic_service.set_paused(False)
+            wifi_service.update()  # Reconnect WiFi if needed
+
+        await asyncio.sleep(1)  # Check the limiter status every second
 
 
 async def main_tasks_loop(homematic_service: HomematicDataService, wifi_service: WiFiManager, led: RGBLED):
@@ -203,9 +226,9 @@ def main():
         ccu_user   = config.get_value("CCU3", "USER", "")
         ccu_pass   = config.get_value("CCU3", "PASS", "")
         valve_type = config.get_value("CCU3", "VALVE_DEVTYPE", "HmIP-eTRV") # Default valve type
-        test_int   = int(config.get_value("TEST", "INT", 0))
-        test_float = float(config.get_value("TEST", "FLOAT", 0.0))
-        test_bool  = config.get_value("TEST", "BOOL", "False").lower() == 'true'
+        # test_int   = int(config.get_value("TEST", "INT", 0))
+        # test_float = float(config.get_value("TEST", "FLOAT", 0.0))
+        # test_bool  = config.get_value("TEST", "BOOL", "False").lower() == 'true'
 
         print("Configuration Loaded.")
 
@@ -238,6 +261,8 @@ def main():
                 Action("> Rescan", lambda: homematic_service.force_rescan()),
             ]),
             Menu("Device", [
+                Action("> View Log", lambda: gui_manager.switch_mode("logview")),
+                Action("> Reset Error limiter", lambda: error_manager.reset_error_rate_limiter()),
                 Action("> Reboot Device", reset),
                 Action("> Save & Reboot", save_and_reboot),
                 Action("> Factory defaults", lambda: factory_reset(display, led, config, homematic_service)),
@@ -245,11 +270,12 @@ def main():
         ]
 
         # Conditionally add the Debug menu
-        if DEBUG>0:
+        if DEVELOPMENT_MODE:
             menu_items.append(
                 Menu("Debug", [
                    Action("> Corrupt session_id", lambda: corrupt_hm_session()),
                    Action("> Force wifi disconnect", lambda: wifi_service.disconnect()),
+                   Action("> Fake Error", lambda: error_manager.log_error("Fake Error")),
                 ])
             )
 
@@ -280,12 +306,12 @@ def main():
     def corrupt_hm_session():
         """Intentionally corrupts the stored Homematic session ID for testing."""
         if homematic_service and hasattr(homematic_service, '_hm'):
-            print("DEBUG ACTION: Corrupting Homematic session ID.")
+            error_manager.log_info("DEBUG ACTION: Corrupting Homematic session ID.")
             homematic_service._hm._session_id = "invalid_session_for_debug"
             # Optional: Force update status to reflect potential disconnect
             # asyncio.create_task(homematic_service._hm._update_connection_status(None, "Manually corrupted session"))
         else:
-            print("DEBUG ACTION: Could not corrupt session (homematic_service or _hm not found).")
+            error_manager.log_warning("DEBUG ACTION: Could not corrupt session (homematic_service or _hm not found).")
     # --- End Helper --- 
 
     # 5. Initialize GUI Manager and Modes
@@ -352,6 +378,27 @@ def main():
     except Exception as e:
         handle_fatal_error("GUIInitError", display, led, str(e))
 
+    # --- NEW ---
+
+    async def log_view_task(log_view, gui_manager):
+        """Task to manage the LogView mode."""
+        while True:
+            if gui_manager.current_mode_name == "logview":
+                gui_manager.render()
+            await asyncio.sleep(0.1)  # Adjust refresh rate as needed
+
+
+
+    # Initialize LogView mode
+    try:
+        log_view = LogView("log.txt", display.rows, display.cols)
+        gui_manager.add_mode("logview", log_view)
+        print("LogView mode initialized.")
+    except Exception as e:
+        handle_fatal_error("LogViewInitError", display, led, str(e))
+
+    # --- END NEW ---
+
     # 6. Start System
     try:
         print("Starting Event Loop...")
@@ -361,17 +408,18 @@ def main():
 
         # Start background tasks
         loop = asyncio.get_event_loop()
-        loop.create_task(safe_task(poll_buttons(buttons), display, led)) # <-- ADDED BUTTON POLLING TASK
+        loop.create_task(safe_task(poll_buttons(buttons), display, led))
         loop.create_task(safe_task(hm_data_update(homematic_service), display, led))
         loop.create_task(safe_task(wifi_update(wifi_service), display, led))
         loop.create_task(safe_task(led_update(led), display, led))
+        loop.create_task(safe_task(monitor_error_rate_limiter(homematic_service, wifi_service, led), display, led))
+        loop.create_task(safe_task(log_view_task(log_view, gui_manager), display, led))
         if DEVELOPMENT_MODE:
-             loop.create_task(safe_task(printout_hm_data(homematic_service), display, led))
-        # Run the main status loop (e.g., for LED control)
+            loop.create_task(safe_task(printout_hm_data(homematic_service), display, led))
         loop.create_task(safe_task(main_tasks_loop(homematic_service, wifi_service, led), display, led))
 
         print("System Running.")
-        loop.run_forever() # Start the asyncio scheduler
+        loop.run_forever()  # Start the asyncio scheduler
 
     except KeyboardInterrupt:
         print("Keyboard Interrupt.")
@@ -382,7 +430,7 @@ def main():
         if display: display.clear()
         if led: led.direct_send_color("black")
         print("System Shutdown.")
-        asyncio.new_event_loop() # Reset asyncio state (good practice in MicroPython)
+        asyncio.new_event_loop()  # Reset asyncio state (good practice in MicroPython)
 
 if __name__ == "__main__":
     main()

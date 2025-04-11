@@ -1,5 +1,6 @@
 import time
 import network
+from manager_error import ErrorManager
 
 
 # --- WiFi Management ---
@@ -19,21 +20,22 @@ class WiFiManager:
         self._status = WiFiManager.STATUS_DISCONNECTED
         self._last_attempt_time = 0
         self._ip_address = None
+        self.error_manager = ErrorManager()
 
         try:
             self._wlan = network.WLAN(network.STA_IF)
             self._wlan.active(False) # Start inactive
-            print("WiFiManager: WLAN interface initialized.")
+            self.error_manager.log_info("WiFiManager: WLAN interface initialized.")
             # Set initial status based on whether credentials are provided
             if self.ssid:
                  self._status = WiFiManager.STATUS_DISCONNECTED
-                 print("WiFiManager: Ready to connect.")
+                 self.error_manager.log_info("WiFiManager: Ready to connect.")
             else:
                  self._status = WiFiManager.STATUS_DISCONNECTED # Or maybe a dedicated NO_CREDS status?
-                 print("WiFiManager: No SSID configured, will remain disconnected.")
+                 self.error_manager.log_warning("WiFiManager: No SSID configured, will remain disconnected.")
 
         except Exception as e:
-            print(f"WiFiManager Error: Failed to initialize WLAN interface: {e}")
+            self.error_manager.log_error(f"WiFiManager Error: Failed to initialize WLAN interface: {e}")
             self._status = WiFiManager.STATUS_ERROR
 
     def _can_attempt_connect(self):
@@ -50,7 +52,7 @@ class WiFiManager:
 
         if self._status == WiFiManager.STATUS_CONNECTED:
             if not is_physically_connected:
-                print("WiFiManager: Connection lost.")
+                self.error_manager.log_warning("WiFiManager: Connection lost.")
                 self._status = WiFiManager.STATUS_DISCONNECTED
                 self._ip_address = None
                 self._wlan.active(False) # Deactivate to ensure clean reconnect
@@ -62,10 +64,10 @@ class WiFiManager:
         elif self._status == WiFiManager.STATUS_CONNECTING:
             if is_physically_connected:
                 self._ip_address = self._wlan.ifconfig()[0]
-                print(f"WiFiManager: Connected. IP: {self._ip_address}")
+                self.error_manager.log_info(f"WiFiManager: Connected. IP: {self._ip_address}")
                 self._status = WiFiManager.STATUS_CONNECTED
             elif self._wlan.status() < 0 or self._wlan.status() >= 3: # Error codes like WRONG_PASSWORD, NO_AP_FOUND, CONN_FAIL
-                print(f"WiFiManager: Connection failed. Status code: {self._wlan.status()}. Retrying later.")
+                self.error_manager.log_warning(f"WiFiManager: Connection failed. Status code: {self._wlan.status()}. Retrying later.")
                 self._status = WiFiManager.STATUS_DISCONNECTED
                 self._wlan.active(False) # Deactivate
                 self._last_attempt_time = time.ticks_ms() # Start retry timer
@@ -73,14 +75,14 @@ class WiFiManager:
 
         elif self._status == WiFiManager.STATUS_DISCONNECTED:
             if self._can_attempt_connect():
-                print(f"WiFiManager: Attempting to connect to '{self.ssid}'...")
+                self.error_manager.log_info(f"WiFiManager: Attempting to connect to '{self.ssid}'...")
                 self._last_attempt_time = time.ticks_ms()
                 try:
                     self._wlan.active(True)
                     self._wlan.connect(self.ssid, self.password)
                     self._status = WiFiManager.STATUS_CONNECTING
                 except Exception as e:
-                    print(f"WiFiManager Error: Exception during connect initiation: {e}")
+                    self.error_manager.log_error(f"WiFiManager Error: Exception during connect initiation: {e}")
                     self._status = WiFiManager.STATUS_DISCONNECTED # Stay disconnected, retry later
                     self._wlan.active(False) # Ensure it's off if connect failed badly
 

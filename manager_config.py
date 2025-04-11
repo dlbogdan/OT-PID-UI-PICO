@@ -2,6 +2,9 @@ import uos
 import time
 from machine import reset
 from hardware_config import DEFAULT_FACTORY_CONFIG
+from manager_error import ErrorManager
+
+error_manager = ErrorManager()
 
 # --- Configuration Management ---
 # class ConfigManager: ... (NO CHANGES NEEDED) ...
@@ -51,7 +54,7 @@ class ConfigManager:
                     f.write('\n')
             return True
         except Exception as e:
-            print(f"Error saving config: {e}")
+            error_manager.log_error(f"Error saving config: {e}")
             return False
 
     
@@ -62,19 +65,19 @@ def factory_reset(display, led, config_manager, hm_service):
     config_file = config_manager.filename # Get current config filename
     cache_file = "hm_device_cache.json" # Assuming this is the name used in HomematicDataService
 
-    print("--- Factory Reset Initiated ---")
+    error_manager.log_info("--- Factory Reset Initiated ---")
     if display: display.show_message("Factory Reset", "Working...")
     if led: led.direct_send_color("blue") # Indicate working state
 
     # 1. Delete Homematic Device Cache
     try:
         uos.remove(cache_file)
-        print(f"Deleted cache file: {cache_file}")
+        error_manager.log_info(f"Deleted cache file: {cache_file}")
     except OSError as e:
         if e.args[0] == 2: # errno.ENOENT (File not found)
-             print(f"Cache file not found (already deleted?): {cache_file}")
+             error_manager.log_warning(f"Cache file not found (already deleted?): {cache_file}")
         else:
-             print(f"Error deleting cache file {cache_file}: {e}")
+             error_manager.log_error(f"Error deleting cache file {cache_file}: {e}")
              if display: display.show_message("Reset Error", "Cache delete fail")
              time.sleep(3)
              # Decide if you want to proceed or stop on cache deletion failure
@@ -86,10 +89,10 @@ def factory_reset(display, led, config_manager, hm_service):
         # Check existence by trying to get stats
         uos.stat(factory_config_file)
         factory_exists = True
-        print(f"Factory config file found: {factory_config_file}")
+        error_manager.log_info(f"Factory config file found: {factory_config_file}")
     except OSError:
         # File doesn't exist, create it from defaults
-        print(f"Factory config file '{factory_config_file}' not found. Creating from defaults...")
+        error_manager.log_warning(f"Factory config file '{factory_config_file}' not found. Creating from defaults...")
         try:
             with open(factory_config_file, 'w') as f:
                 for section, items in DEFAULT_FACTORY_CONFIG.items():
@@ -98,9 +101,9 @@ def factory_reset(display, led, config_manager, hm_service):
                         f.write(f'{key}={value}\n')
                     f.write('\n')
             factory_exists = True
-            print("Created default factory config file.")
+            error_manager.log_info("Created default factory config file.")
         except Exception as e_create:
-            print(f"FATAL: Could not create factory config file '{factory_config_file}': {e_create}")
+            error_manager.log_error(f"FATAL: Could not create factory config file '{factory_config_file}': {e_create}")
             if display: display.show_message("Reset Error", "Factory create")
             time.sleep(3)
             return # Stop if we can't create the factory defaults
@@ -115,7 +118,7 @@ def factory_reset(display, led, config_manager, hm_service):
                     if not chunk:
                         break
                     f_dest.write(chunk)
-            print(f"Copied '{factory_config_file}' to '{config_file}'")
+            error_manager.log_info(f"Copied '{factory_config_file}' to '{config_file}'")
 
             # Optional: Reload config in ConfigManager if needed immediately,
             # but rebooting makes this less critical.
@@ -129,7 +132,7 @@ def factory_reset(display, led, config_manager, hm_service):
             reset() # Reboot the device
 
         except Exception as e_copy:
-            print(f"FATAL: Error copying factory config: {e_copy}")
+            error_manager.log_error(f"FATAL: Error copying factory config: {e_copy}")
             if display: display.show_message("Reset Error", "Config copy fail")
             if led: led.direct_send_color("red")
             time.sleep(3)
@@ -137,7 +140,7 @@ def factory_reset(display, led, config_manager, hm_service):
             return
     else:
         # This case should ideally not be reached due to the creation logic above
-        print("FATAL: Factory config file could not be accessed.")
+        error_manager.log_error("FATAL: Factory config file could not be accessed.")
         if display: display.show_message("Reset Error", "Factory access")
         if led: led.direct_send_color("red")
         time.sleep(3)

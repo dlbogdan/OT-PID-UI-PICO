@@ -621,7 +621,13 @@ class NavigationMode(UIMode):
 
         # Navigation mode typically doesn't show a cursor
         display.show_cursor(False)
-        display.show_message(title, item_text)
+        lines_to_show = [title, item_text] # Example for 2-row display
+        scroll_these = []
+        if len(item_text) > display.cols:
+             scroll_these.append(1) # Tell controller to scroll row 1
+
+        # Assuming 'display' is the DisplayController instance
+        display.show_message(*lines_to_show)
 
     def handle_event(self, event, manager):
         menu = self.current_menu
@@ -838,7 +844,7 @@ class MonitoringMode(UIMode):
         try:
             while True:
                 await asyncio.sleep_ms(self.refresh_interval_ms)
-                if DEBUG >= 3: print("MonitoringMode Refresh Task: Tick - Rendering.")
+                if DEBUG > 3: print("MonitoringMode Refresh Task: Tick - Rendering.")
                 try:
                     # Check if we are still in monitoring mode before rendering
                     # This is a safety check, exit() should cancel the task.
@@ -1201,16 +1207,160 @@ class GUIManager(ButtonObserver):
                 self._repeat_button = None
                 if DEBUG >= 2: print("Repeat task state cleared by task itself.")
 
-
     def _cancel_repeat_task(self):
-        """Safely cancels the asyncio repeat task if it's running."""
-        if self._repeat_task and not self._repeat_task.done():
-            try:
-                if DEBUG >= 1: print(f"Cancelling repeat task for Button {self._repeat_button}")
-                self._repeat_task.cancel()
-                # Important: Let the task's finally block clear _repeat_task and _repeat_button
-                # to avoid race conditions. Do not clear them here directly.
-            except Exception as e:
-                print(f"Error during repeat task cancellation: {e}")
+            """Safely cancels the asyncio repeat task if it's running."""
+            if self._repeat_task and not self._repeat_task.done():
+                try:
+                    if DEBUG >= 1: print(f"Cancelling repeat task for Button {self._repeat_button}")
+                    self._repeat_task.cancel()
+                    # Important: Let the task's finally block clear _repeat_task and _repeat_button
+                    # to avoid race conditions. Do not clear them here directly.
+                except Exception as e:
+                    print(f"Error during repeat task cancellation: {e}")
         # else:
             # print("Cancel requested, but no repeat task active or already finished.")
+
+# --- LogView Mode ---
+class LogView(UIMode):
+    """Displays text from a file with scrolling and navigation."""
+    def __init__(self, file_path, display_rows, display_cols):
+        self.file_path = file_path
+        self.display_rows = display_rows
+        self.display_cols = display_cols
+        self.current_line_index = 0  # Index of the currently focused line in the file
+        self.cursor_position = 0  # Position of the cursor within the visible lines
+        self.buffer_start_index = 0  # Start index of the buffer in the file
+        self.buffer = []  # Holds the currently loaded lines
+
+    def _load_buffer(self):
+        """Loads lines into the buffer and sets end_of_file_reached.
+           EOF is considered reached if loading the buffer results in fewer
+           lines than display_rows.
+        """
+        self.buffer = []
+        self.end_of_file_reached = False # Assume not EOF initially
+        lines_loaded = 0
+        try:
+            with open(self.file_path, 'r') as f:
+                line_counter = 0
+                for line in f:
+                    # Skip lines before buffer start
+                    if line_counter < self.buffer_start_index:
+                        line_counter += 1
+                        continue
+
+                    # Load lines into buffer (up to display_rows)
+                    if lines_loaded < self.display_rows:
+                        self.buffer.append(line.strip()) # strip() might be important
+                        lines_loaded += 1
+                    else:
+                        # Buffer is full, stop reading for this pass
+                        break
+
+                    line_counter += 1
+
+            # Determine EOF based on whether we could fill the buffer
+            if lines_loaded < self.display_rows:
+                self.end_of_file_reached = True
+            # else: Buffer is full, so we are definitely not at EOF yet.
+
+        except Exception as e:
+            print(f"Error loading log file buffer: {e}")
+            self.buffer = [] # Clear buffer on error
+            self.end_of_file_reached = True # Treat error as EOF
+
+    def enter(self, manager, context=None):
+        print("Entering LogView Mode")
+        self.current_line_index = 0
+        self.cursor_position = 0
+        self.buffer_start_index = 0
+        self._load_buffer()
+        # Ensure cursor_position is valid after initial load
+        self.cursor_position = min(self.cursor_position, max(0, len(self.buffer) - 1))
+        manager.render()
+
+    def exit(self, manager):
+        print("Exiting LogView Mode")
+        self.buffer = []
+
+    def render(self, display):
+        display.show_cursor(False)
+        lines_to_display = []
+        scroll_these = [] # List to hold indices of lines needing scroll
+
+        # Process lines that are actually in the buffer
+        for i in range(len(self.buffer)):
+            line = self.buffer[i]
+            prefix = ">" if i == self.cursor_position else " "
+            # Construct the full potential line content *before* padding/truncation
+            full_line_content = f"{prefix}{line}"
+
+            # Check if this line is focused AND needs scrolling
+            if i == self.cursor_position and len(full_line_content) > self.display_cols:
+                scroll_these.append(i) # Mark this line index for scrolling
+
+            # Pad/truncate the line content for the list we build
+            # The display controller will handle the actual scrolling based on the full content
+            # But we still need to pass correctly formatted lines initially.
+            line_with_prefix = pad_string(full_line_content, self.display_cols)
+            lines_to_display.append(line_with_prefix)
+
+        # Pad the list with blank lines if buffer is shorter than display height
+        while len(lines_to_display) < self.display_rows:
+            lines_to_display.append(" " * self.display_cols)
+
+        # Pass the full list AND the list of lines to scroll
+        display.show_message(*lines_to_display)
+
+    def handle_event(self, event, manager):
+        action_taken = False # Flag to track if state changed
+        if event.type == ButtonEventType.PRESSED:
+            if event.button == ButtonName.UP:
+                if self.cursor_position > 0:
+                    self.cursor_position -= 1
+                    action_taken = True
+                elif self.buffer_start_index > 0:
+                    # Scroll up
+                    self.buffer_start_index -= 1
+                    self._load_buffer()
+                    # Cursor position stays at the top after scrolling up
+                    self.cursor_position = 0
+                    action_taken = True
+                # else: At top of file, do nothing
+
+            elif event.button == ButtonName.DOWN:
+                # Can cursor move down within the current buffer?
+                if self.cursor_position < len(self.buffer) - 1:
+                    self.cursor_position += 1
+                    action_taken = True
+                # Is cursor at the bottom of buffer, but file *might* continue?
+                elif not self.end_of_file_reached:
+                    # Attempt to scroll buffer down
+                    original_start_index = self.buffer_start_index
+                    self.buffer_start_index += 1
+                    self._load_buffer()
+
+                    # Check if the scroll actually loaded a valid next view
+                    if len(self.buffer) > 0:
+                        # Scroll successful, keep cursor at the bottom of the new (potentially shorter) buffer view
+                        self.cursor_position = len(self.buffer) - 1
+                        action_taken = True
+                    else:
+                        # Scroll failed (hit EOF), revert state
+                        self.buffer_start_index = original_start_index
+                        self._load_buffer() # Reload previous view
+                        # Cursor stays where it was (last line of previous view)
+                        self.cursor_position = len(self.buffer) - 1
+                        # No action_taken = True, as state is unchanged
+                # else: Cursor is at bottom of buffer AND end_of_file_reached is True. Do nothing.
+
+            elif event.button == ButtonName.LEFT:
+                # Exit LogView and return to the menu
+                manager.switch_mode("navigation")
+                return True # Event consumed by mode switch
+
+        # Render only if an action was taken that changed the state
+        if action_taken:
+            manager.render()
+
+        return action_taken # Return True if handled (state changed), False otherwise
