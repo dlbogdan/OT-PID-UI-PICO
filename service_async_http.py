@@ -269,7 +269,7 @@ class JsonRpcClient:
                     response_data = json.loads(body)
                     if "error" in response_data and response_data["error"]:
                         print(f"AsyncJsonRpcClient Error: Received JSON-RPC error: {response_data['error']}")
-                    error_manager.log_info(f"Async RPC Response < ID: {id_val}, Status: {status_code}")
+                    error_manager.log_error(f"Async RPC Response < ID: {id_val}, Status: {status_code}")
                     return response_data # Success or RPC-level error contained within
                 except ValueError:
                     print(f"AsyncJsonRpcClient Error: Response status 200 but body is not valid JSON.")

@@ -7,6 +7,10 @@ from machine import I2C, Pin
 import utime as time  # Use utime for MicroPython compatibility
 from controller_HID import ButtonObserver, ButtonEventType, ButtonName, ButtonEvent
 import uasyncio as asyncio # Add asyncio import
+from manager_error import ErrorManager # Import the class
+
+# Instantiate to access the global error manager instance
+error_manager = ErrorManager()
 
 # --- Import DEBUG flag ---
 # Use a default value if flags.py or DEBUG is not found
@@ -667,7 +671,10 @@ class NavigationMode(UIMode):
                             try:
                                 item.callback()
                             except Exception as e:
-                                print(f"Error executing action '{item.name}': {e}")
+                                # Log the error in addition to printing
+                                error_message = f"Error executing action '{item.name}': {e}"
+                                print(error_message)
+                                error_manager.log_error(error_message)
                                 # Optionally show error on display?
                         handled = True
             # Note: Back (LEFT) is handled as long press below
@@ -807,7 +814,9 @@ class MonitoringMode(UIMode):
                 page_obj = self.pages[self.current_page_index]
                 page_obj.render(display)
             except Exception as e:
-                print(f"Error rendering monitor page {self.current_page_index}: {e}")
+                error_message = f"Error rendering monitor page {self.current_page_index}: {e}"
+                print(error_message)
+                error_manager.log_error(error_message)
                 display.show_message("Monitor Error", f"Page {self.current_page_index+1} err")
         else:
             # No pages or invalid index
@@ -854,12 +863,18 @@ class MonitoringMode(UIMode):
                         if DEBUG >= 1: print("MonitoringMode Refresh Task: Mode changed, exiting loop.")
                         break
                 except Exception as e:
-                    print(f"Error during monitor refresh render: {e}")
+                    # Log error during render
+                    error_message = f"Error during monitor refresh render: {e}"
+                    print(error_message)
+                    error_manager.log_error(error_message)
                     # Continue trying to refresh
         except asyncio.CancelledError:
             if DEBUG >= 1: print("MonitoringMode Refresh Task: Cancelled.")
         except Exception as e:
-            print(f"Error in MonitoringMode Refresh Task: {e}")
+            # Log general task error
+            error_message = f"Error in MonitoringMode Refresh Task: {e}"
+            print(error_message)
+            error_manager.log_error(error_message)
         finally:
             if DEBUG >= 1: print("MonitoringMode Refresh Task: Finished.")
 
@@ -898,8 +913,9 @@ class EditingMode(UIMode):
             print(f"Editing field: {self.editing_field.name} with {type(self.editor).__name__}")
             manager.render() # Render editor immediately
         else:
-            print("Error: EditingMode entered without valid 'field' in context.")
-            # Fallback: Immediately switch back to navigation
+            error_message = "Error: EditingMode entered without valid 'field' in context."
+            print(error_message)
+            error_manager.log_warning(error_message) # Log as warning
             manager.switch_mode("navigation")
 
     def exit(self, manager):
@@ -914,7 +930,9 @@ class EditingMode(UIMode):
 
     def render(self, display):
         if not self.editor or not self.editing_field:
-            display.show_message("Edit Error", "") # Should not happen
+            error_message = "EditingMode.render: Editor or field missing!"
+            error_manager.log_warning(error_message) # Log as warning
+            display.show_message("Edit Error", "")
             if self._cursor_visible_state: display.show_cursor(False)
             self._cursor_visible_state = False
             return
@@ -998,9 +1016,11 @@ class EditingMode(UIMode):
         if call_editor_handle:
             if DEBUG >= 2: print("DEBUG: EditingMode - Calling self.editor.handle()") # DEBUG
             try:
-                self.editor.handle(event) # Pass the original event
+                self.editor.handle(event)
             except Exception as e:
-                if DEBUG >= 1: print(f"ERROR: Exception during self.editor.handle(): {e}") # DEBUG
+                error_message = f"ERROR: Exception during self.editor.handle(): {e}"
+                print(error_message)
+                error_manager.log_error(error_message)
         # else:
         #      if DEBUG >= 2: print("DEBUG: EditingMode - NOT calling self.editor.handle()") # DEBUG
 
@@ -1058,8 +1078,9 @@ class GUIManager(ButtonObserver):
         target_mode = self.modes.get(name)
 
         if not target_mode:
-            print(f"Error: Mode '{name}' not found!")
-            # Optionally switch to a default 'error' mode or do nothing
+            error_message = f"Error: Mode '{name}' not found!"
+            print(error_message)
+            error_manager.log_error(error_message)
             return
 
         # Cancel any ongoing repeat task before switching modes
@@ -1070,7 +1091,9 @@ class GUIManager(ButtonObserver):
             try:
                 self.current_mode.exit(self)
             except Exception as e:
-                print(f"Error calling exit() on mode {self.current_mode_name}: {e}")
+                error_message = f"Error calling exit() on mode {self.current_mode_name}: {e}"
+                print(error_message)
+                error_manager.log_error(error_message)
 
         # Set the new mode
         self.current_mode_name = name
@@ -1083,8 +1106,9 @@ class GUIManager(ButtonObserver):
             # Initial render should be triggered by enter() or subsequent event handling
             # self.render() # Avoid double rendering if enter() calls render()
         except Exception as e:
-            print(f"Error calling enter() on mode {self.current_mode_name}: {e}")
-            # Handle error: maybe switch back or to an error mode?
+            error_message = f"Error calling enter() on mode {self.current_mode_name}: {e}"
+            print(error_message)
+            error_manager.log_error(error_message)
             self.current_mode = None
             self.current_mode_name = None
 
@@ -1097,8 +1121,9 @@ class GUIManager(ButtonObserver):
             try:
                 self.current_mode.render(self.display)
             except Exception as e:
-                print(f"Error rendering mode {self.current_mode_name}: {e}")
-                # Optionally show an error message on the display
+                error_message = f"Error rendering mode {self.current_mode_name}: {e}"
+                print(error_message)
+                error_manager.log_error(error_message)
                 self.display.show_message("Render Error", f"{e}")
         else:
             # Display something if no mode is active (e.g., during startup or error)
@@ -1134,7 +1159,9 @@ class GUIManager(ButtonObserver):
         try:
             response = self.current_mode.handle_event(event, self)
         except Exception as e:
-             print(f"Error handling event in mode {self.current_mode_name}: {e}")
+             error_message = f"Error handling event in mode {self.current_mode_name}: {e}"
+             print(error_message)
+             error_manager.log_error(error_message)
              # Optionally show error on display or switch to error mode
 
 
@@ -1189,14 +1216,18 @@ class GUIManager(ButtonObserver):
                     # Mode's handle_event is responsible for rendering the change
                     self.current_mode.handle_event(sim_event, self)
                 except Exception as e:
-                    print(f"Error handling repeat event in mode {self.current_mode_name}: {e}")
+                    error_message = f"Error handling repeat event in mode {self.current_mode_name}: {e}"
+                    print(error_message)
+                    error_manager.log_error(error_message)
                     break # Stop repeating on error
 
         except asyncio.CancelledError:
             if DEBUG >= 1: print(f"Repeat task cancelled for Button {repeating_button}")
             # This is expected when _cancel_repeat_task is called
         except Exception as e:
-            print(f"Unexpected error in repeat task: {e}")
+            error_message = f"Unexpected error in repeat task: {e}"
+            print(error_message)
+            error_manager.log_error(error_message)
         finally:
             if DEBUG >= 2: print(f"Repeat task finished for Button {repeating_button}.")
             # Clean up state ONLY if this task instance is the one currently stored
@@ -1265,7 +1296,9 @@ class LogView(UIMode):
             # else: Buffer is full, so we are definitely not at EOF yet.
 
         except Exception as e:
-            print(f"Error loading log file buffer: {e}")
+            error_message = f"Error loading log file buffer: {e}"
+            print(error_message)
+            error_manager.log_error(error_message)
             self.buffer = [] # Clear buffer on error
             self.end_of_file_reached = True # Treat error as EOF
 

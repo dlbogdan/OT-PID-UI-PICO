@@ -32,10 +32,10 @@ class WiFiManager:
                  self.error_manager.log_info("WiFiManager: Ready to connect.")
             else:
                  self._status = WiFiManager.STATUS_DISCONNECTED # Or maybe a dedicated NO_CREDS status?
-                 self.error_manager.log_warning("WiFiManager: No SSID configured, will remain disconnected.")
+                 self.error_manager.log_error("WiFiManager: No SSID configured, will remain disconnected.")
 
         except Exception as e:
-            self.error_manager.log_error(f"WiFiManager Error: Failed to initialize WLAN interface: {e}")
+            self.error_manager.log_fatal_error("WiFiManager Error: Failed to initialize WLAN interface", e)
             self._status = WiFiManager.STATUS_ERROR
 
     def _can_attempt_connect(self):
@@ -52,7 +52,7 @@ class WiFiManager:
 
         if self._status == WiFiManager.STATUS_CONNECTED:
             if not is_physically_connected:
-                self.error_manager.log_warning("WiFiManager: Connection lost.")
+                self.error_manager.log_error("WiFiManager: Connection lost.")
                 self._status = WiFiManager.STATUS_DISCONNECTED
                 self._ip_address = None
                 self._wlan.active(False) # Deactivate to ensure clean reconnect
@@ -67,7 +67,7 @@ class WiFiManager:
                 self.error_manager.log_info(f"WiFiManager: Connected. IP: {self._ip_address}")
                 self._status = WiFiManager.STATUS_CONNECTED
             elif self._wlan.status() < 0 or self._wlan.status() >= 3: # Error codes like WRONG_PASSWORD, NO_AP_FOUND, CONN_FAIL
-                self.error_manager.log_warning(f"WiFiManager: Connection failed. Status code: {self._wlan.status()}. Retrying later.")
+                self.error_manager.log_error(f"WiFiManager: Connection failed. Status code: {self._wlan.status()}. Retrying later.")
                 self._status = WiFiManager.STATUS_DISCONNECTED
                 self._wlan.active(False) # Deactivate
                 self._last_attempt_time = time.ticks_ms() # Start retry timer

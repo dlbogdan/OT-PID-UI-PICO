@@ -209,9 +209,17 @@ def main():
 
     except Exception as e:
         # Handle early hardware init errors (display/LED might not be available)
-        print(f"FATAL: Hardware Init Failed: {e}")
+        error_message = f"FATAL: Hardware Init Failed: {e}"
+        print(error_message)
+        error_manager.log_fatal_error("HardwareInit", error_message)
         import sys
-        sys.print_exception(e) # Print traceback for hardware issues
+        # Use print_exception directly if available (MicroPython specific)
+        try:
+            sys.print_exception(e)
+            error_manager.log_fatal_error("HardwareInit", "Traceback logged via print_exception")
+        except AttributeError:
+            # Fallback if print_exception doesn't exist or fails
+            print("Could not print traceback.")
         # Attempt to use LED if initialized
         if '_g_led' in globals() and _g_led: _g_led.direct_send_color("red")
         # Can't use full error handler yet

@@ -72,7 +72,7 @@ class HomematicRPCClient:
                    "access denied" in err_msg or \
                    err_code == -1:
                     session_expired = True
-                    error_manager.log_warning(f"Async HC: Detected potential session expiry/auth issue (Error: {err_data}). Re-logging in.")
+                    error_manager.log_error(f"Async HC: Detected potential session expiry/auth issue (Error: {err_data}). Re-logging in.")
                 else:
                     # Other errors don't mean CCU is disconnected
                     await self._update_connection_status(response)
