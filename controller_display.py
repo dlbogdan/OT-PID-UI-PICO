@@ -1,5 +1,6 @@
 from driver_lcd import LCD
 import time
+from machine import Timer
 
 
 
@@ -9,7 +10,13 @@ class DisplayController:
         self.lcd = lcd
         self.cols = self.lcd.cols
         self.rows = self.lcd.rows
-        self._buffer = [" " * self.cols for _ in range(self.rows)]
+        self._scroll_positions = {}  # {row: position}
+        self._scroll_timestamps = {}  # {row: last_update_time}
+        self._original_texts = {}  # {row: original_text}
+        self._scroll_timer = None    # Timer for auto-scrolling
+        self._scroll_refresh = 50
+        self._scroll_period = 250
+        self._scroll_wait = 1000
         self.clear()
 
     def _pad(self, text, length):
@@ -22,17 +29,76 @@ class DisplayController:
     def clear(self):
         self.lcd.clear()
         self._buffer = [" " * self.cols for _ in range(self.rows)]
+        self._scroll_positions = {}
+        self._scroll_timestamps = {}
+        self._original_texts = {}
+        self._stop_scroll_timer()
     
-    def show_message(self, *lines):
-        # Pad all lines to the correct length
-        padded_lines = [self._pad(line, self.cols) for line in lines]
+    def _stop_scroll_timer(self):
+        """Stop the scrolling timer if active."""
+        if self._scroll_timer:
+            try:
+                self._scroll_timer.deinit()
+            except:
+                pass
+            self._scroll_timer = None
+    
+    def _start_scroll_timer(self):
+        """Start a timer to update scrolling text every 30ms."""
+        if not self._scroll_timer and self._original_texts:
+            # Create a timer in periodic mode (mode=-1)
+            self._scroll_timer = Timer(-1)
+            # Schedule the _update_scrolling method to run every 30ms
+            self._scroll_timer.init(period=self._scroll_refresh, mode=Timer.PERIODIC, callback=lambda t: self._update_scrolling())
+    
+    def show_message(self, *lines, scrolling_lines=None):
+        if scrolling_lines is None:
+            scrolling_lines = []
+        
+        current_time = time.ticks_ms()
+        
+        # Process and prepare all lines
+        processed_lines = []
+        needs_scrolling = False
+        
+        for i, line in enumerate(lines):
+            if i >= self.rows:
+                break
+                
+            line_str = str(line)
+            
+            # If this is a scrolling line and text is longer than display
+            if i in scrolling_lines and len(line_str) > self.cols:
+                # Store original text if not already stored or reset position if content changed
+                if i not in self._original_texts or self._original_texts[i] != line_str:
+                    self._original_texts[i] = line_str
+                    self._scroll_positions[i] = 0  # Reset position to beginning
+                    self._scroll_timestamps[i] = current_time
+                
+                needs_scrolling = True
+                
+                # Extract the visible portion based on current scroll position
+                visible_text = line_str[self._scroll_positions[i]:self._scroll_positions[i] + self.cols]
+                processed_lines.append(self._pad(visible_text, self.cols))
+            else:
+                # Non-scrolling line, just pad normally
+                if i in self._original_texts:
+                    # If was scrolling but now fits or is not in scrolling_lines, reset
+                    del self._original_texts[i]
+                    if i in self._scroll_positions:
+                        del self._scroll_positions[i]
+                    if i in self._scroll_timestamps:
+                        del self._scroll_timestamps[i]
+                
+                processed_lines.append(self._pad(line_str, self.cols))
+        
         # Fill remaining lines with spaces if not enough lines provided
-        while len(padded_lines) < self.rows:
-            padded_lines.append(" " * self.cols)
+        while len(processed_lines) < self.rows:
+            processed_lines.append(" " * self.cols)
         
         # Compare and update each line
         for row in range(self.rows):
-            current_line = padded_lines[row]
+            current_line = processed_lines[row]
             buffer_line = self._buffer[row]
             col = 0
             
@@ -52,7 +118,69 @@ class DisplayController:
                     self.lcd.write_text(current_line[start_col:col])
         
         # Update buffer with new text
-        self._buffer = padded_lines[:self.rows]
+        self._buffer = processed_lines[:self.rows]
+        
+        # Start or stop the scrolling timer as needed
+        if needs_scrolling:
+            self._start_scroll_timer()
+        elif not self._original_texts:
+            self._stop_scroll_timer()
+
+    def _update_scrolling(self):
+        """Update scrolling text without needing to call show_message repeatedly."""
+        current_time = time.ticks_ms()
+        
+        # Process any scrolling lines
+        for row, original_text in self._original_texts.items():
+            if len(original_text) <= self.cols:
+                continue  # No need to scroll if text fits
+                
+            # Check if it's time to update the scroll position
+            time_diff = time.ticks_diff(current_time, self._scroll_timestamps.get(row, 0))
+            
+            # Initial pause or end pause (500ms)
+            if (self._scroll_positions.get(row, 0) == 0 or 
+                self._scroll_positions.get(row, 0) == len(original_text) - self.cols) and time_diff < self._scroll_wait:
+                # Keep current position during pause
+                pass
+            elif time_diff >= self._scroll_period:  # Scroll speed (200ms per step)
+                # Update scroll position
+                self._scroll_timestamps[row] = current_time
+                if self._scroll_positions.get(row, 0) < len(original_text) - self.cols:
+                    self._scroll_positions[row] = self._scroll_positions.get(row, 0) + 1
+                else:
+                    # Reset to beginning after end pause
+                    self._scroll_positions[row] = 0
+                
+                # Extract the visible portion based on current scroll position
+                visible_text = original_text[self._scroll_positions[row]:self._scroll_positions[row] + self.cols]
+                padded_text = self._pad(visible_text, self.cols)
+                
+                # Update display if text changed
+                if self._buffer[row] != padded_text:
+                    # Compare with buffer and only update changed characters
+                    col = 0
+                    while col < self.cols:
+                        # Find the next character that differs
+                        while col < self.cols and padded_text[col] == self._buffer[row][col]:
+                            col += 1
+                        
+                        if col < self.cols:
+                            # Found a difference, now find how many consecutive characters differ
+                            start_col = col
+                            while col < self.cols and padded_text[col] != self._buffer[row][col]:
+                                col += 1
+                            
+                            # Write the chunk of changed characters
+                            self.lcd.set_cursor(start_col, row)
+                            self.lcd.write_text(padded_text[start_col:col])
+                    
+                    # Update buffer with new text
+                    self._buffer[row] = padded_text
+        
+        # If no more scrolling lines, stop the timer
+        if not self._original_texts:
+            self._stop_scroll_timer()
 
     # def update_status_icons(self, wifi_connected, valve_connected, boiler_connected, blink_wifi=False, ccu_connected=None):
     #     """Draw status icons in fixed positions: boiler [col-3], valve [col-2], wifi [col-1]."""

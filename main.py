@@ -207,10 +207,10 @@ def main():
     try:
         i2c = init_i2c()
         mcp = init_mcp(i2c)
-        lcd_hw = init_lcd(mcp) # Use a different name to avoid conflict with global 'lcd' potentially used in error handler
+        lcd_hw = init_lcd(mcp) 
         led = init_rgb_led(mcp)
-        buttons = init_buttons(mcp) # Returns HIDController instance
-        display = DisplayController(lcd_hw) # Wrapper for LCD
+        buttons = init_buttons(mcp) 
+        display = DisplayController(lcd_hw) 
         _g_display = display # Store globally for error handler
         _g_led = led       # Store globally for error handler
 
@@ -219,7 +219,8 @@ def main():
              display.load_custom_chars(CUSTOM_CHARS)
 
         display.show_message("System Booting", "Please wait...")
-        error_manager.log_error("Hardware reset detected.")
+        if not DEVELOPMENT_MODE: 
+            error_manager.log_error("Hardware reset detected.")
         led.direct_send_color("red") # Indicate booting
         print("Hardware Initialized.")
 
@@ -283,14 +284,14 @@ def main():
                 TextField("CCU3 User", ccu_user, lambda v: save_config_callback("CCU3", "USER", v)),
                 TextField("CCU3 Pass", ccu_pass, lambda v: save_config_callback("CCU3", "PASS", v)),
                 TextField("Valve Type", valve_type, lambda v: save_config_callback("CCU3", "VALVE_DEVTYPE", v)),
-                Action("> Rescan", lambda: homematic_service.force_rescan()),
+                Action("Rescan", lambda: homematic_service.force_rescan()),
             ]),
             Menu("Device", [
-                Action("> View Log", lambda: gui_manager.switch_mode("logview")),
-                Action("> Reset Error limiter", lambda: error_manager.reset_error_rate_limiter()),
-                Action("> Reboot Device", reset),
-                Action("> Save & Reboot", save_and_reboot),
-                Action("> Factory defaults", lambda: factory_reset(display, led, config, homematic_service)),
+                Action("View Log", lambda: gui_manager.switch_mode("logview")),
+                Action("Reset Error limiter", lambda: error_manager.reset_error_rate_limiter()),
+                Action("Reboot Device", reset),
+                Action("Save & Reboot", save_and_reboot),
+                Action("Factory defaults", lambda: factory_reset(display, led, config, homematic_service)),
             ]),
         ]
 
@@ -298,9 +299,9 @@ def main():
         if DEVELOPMENT_MODE:
             menu_items.append(
                 Menu("Debug", [
-                   Action("> Corrupt session_id", lambda: corrupt_hm_session()),
-                   Action("> Force wifi disconnect", lambda: wifi_service.disconnect()),
-                   Action("> Fake Error", lambda: error_manager.log_error("Fake Error")),
+                   Action("Corrupt session_id", lambda: corrupt_hm_session()),
+                   Action("Force wifi disconnect", lambda: wifi_service.disconnect()),
+                   Action("Fake Error", lambda: error_manager.log_error("Fake Error")),
                 ])
             )
 

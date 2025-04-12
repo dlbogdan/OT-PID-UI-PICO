@@ -21,9 +21,9 @@ except ImportError:
 # --- End Import ---
 
 def pad_string(text, length):
-    """Pads or truncates a string to a specific length."""
+    """Pads if shorter than length, returns full text if longer."""
     text = str(text)
-    return text[:length] + " " * max(0, length - len(text[:length]))
+    return text if len(text) >= length else text + " " * (length - len(text))
 
 # --- Menu/Field/Action Definitions ---
 class Menu:
@@ -34,7 +34,10 @@ class Menu:
 
     def render(self, cols):
         # Indicate it's a menu entry
-        return f"> {self.name}"[:cols]
+        if cols > 0: 
+            return f"{self.name}"[:cols]
+        else: # No cols, return full name
+            return f"{self.name}"
 
 class Action:
     def __init__(self, name, callback):
@@ -43,7 +46,10 @@ class Action:
 
     def render(self, cols):
         # Simple action name display
-        return self.name[:cols]
+        if cols > 0: 
+            return f"> {self.name}"[:cols]
+        else: # No cols, return full name
+            return f"> {self.name}"
 
     def is_editable(self):
         return False # Actions are not editable
@@ -603,18 +609,9 @@ class NavigationMode(UIMode):
                 menu.selected = 0
 
             item = menu.items[menu.selected]
-            raw_item_text = item.render(display.cols * 2) # Render with more space for scrolling
-            # Apply scrolling only if needed
-            if len(raw_item_text) > display.cols:
-                 # Check if item changed, reset scroll if so
-                 if raw_item_text != self._current_display_text:
-                      self._current_display_text = raw_item_text
-                      self._reset_scroll()
-                 item_text = self._scroll_text(raw_item_text, display.cols)
-            else:
-                 item_text = pad_string(raw_item_text, display.cols)
-                 self._current_display_text = raw_item_text # Cache even non-scrolling text
-
+            item_text = item.render(0) # Render with more space for scrolling
+           
+            #self._current_display_text = raw_item_text
             # Optional: Add indicator for non-editable fields
             if isinstance(item, Field) and not item.is_editable():
                 # Add indicator (e.g., at the end) if space allows
@@ -626,12 +623,10 @@ class NavigationMode(UIMode):
         # Navigation mode typically doesn't show a cursor
         display.show_cursor(False)
         lines_to_show = [title, item_text] # Example for 2-row display
-        scroll_these = []
-        if len(item_text) > display.cols:
-             scroll_these.append(1) # Tell controller to scroll row 1
-
+  
         # Assuming 'display' is the DisplayController instance
-        display.show_message(*lines_to_show)
+        print(lines_to_show)
+        display.show_message(*lines_to_show, scrolling_lines=[0, 1])
 
     def handle_event(self, event, manager):
         menu = self.current_menu
@@ -1343,7 +1338,7 @@ class LogView(UIMode):
             lines_to_display.append(" " * self.display_cols)
 
         # Pass the full list AND the list of lines to scroll
-        display.show_message(*lines_to_display)
+        display.show_message(*lines_to_display, scrolling_lines=scroll_these)
 
     def handle_event(self, event, manager):
         action_taken = False # Flag to track if state changed
