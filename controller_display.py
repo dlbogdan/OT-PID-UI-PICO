@@ -14,8 +14,8 @@ class DisplayController:
         self._scroll_timestamps = {}  # {row: last_update_time}
         self._original_texts = {}  # {row: original_text}
         self._scroll_timer = None    # Timer for auto-scrolling
-        self._scroll_refresh = 50
-        self._scroll_period = 250
+        self._scroll_refresh = 30
+        self._scroll_period = 300
         self._scroll_wait = 1000
         self.clear()
 
