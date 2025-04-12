@@ -269,19 +269,24 @@ class JsonRpcClient:
                     response_data = json.loads(body)
                     if "error" in response_data and response_data["error"]:
                         print(f"AsyncJsonRpcClient Error: Received JSON-RPC error: {response_data['error']}")
-                    error_manager.log_error(f"Async RPC Response < ID: {id_val}, Status: {status_code}")
+                        error_manager.log_error(f"Async JsonRpcClient Error: Received JSON-RPC error: {response_data['error']}")
+                    error_manager.log_info(f"Async RPC Response < ID: {id_val}, Status: {status_code}")
                     return response_data # Success or RPC-level error contained within
                 except ValueError:
                     print(f"AsyncJsonRpcClient Error: Response status 200 but body is not valid JSON.")
                     print(f"Response body sample: {body[:100]}") # Print sample
+                    error_manager.log_error(f"Async JsonRpcClient Error: Response status 200 but body is not valid JSON.")
+                
                     # Treat as failure, potentially retry
             else:
                 print(f"AsyncJsonRpcClient Error: HTTP status {status_code}. Body: {body[:100]}")
+                error_manager.log_error(f"Async JsonRpcClient Error: HTTP status {status_code}.")
                 # Decide if this status code warrants a retry (e.g., 5xx errors)
 
             # --- Retry Logic ---
             if attempt >= retries:
                 print(f"AsyncJsonRpcClient Error: Request failed after {attempt} attempts.")
+                error_manager.log_error(f"Async JsonRpcClient Error: Request failed after {attempt} attempts.")
                 return None # Max retries reached
 
             wait_time = backoff_factor * (2 ** (attempt - 1))

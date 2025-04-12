@@ -1,7 +1,7 @@
 import json
 import time
 from machine import reset
-
+from flags import DEBUG
 class ErrorManager:
     """Manages error logging with minimal flash writes."""
 
@@ -13,6 +13,7 @@ class ErrorManager:
         self._error_history = []  # Stores the last 3 errors and warnings
         self._error_timestamps = []  # Tracks timestamps of recent errors for rate limiting
         self._max_error_history = 10
+        self._error_rate_limit = 3
         self.error_rate_limiter_reached = False
 
     def log_fatal_error(self, error_type, message, traceback=None):
@@ -38,16 +39,21 @@ class ErrorManager:
 
     def log_error(self, message):
         """Logs a non-fatal error to log.txt and tracks it for rate limiting."""
+        print(f"ERROR: {message}")
         self._log_to_file("ERROR", f"{message}")
         self._track_error_rate()
         self._add_to_history("ERROR", message)
 
     def log_warning(self, message):
         """Logs a warning message to the history."""
+        if DEBUG>=1:
+            print(f"WARNING: {message}")
         self._add_to_history("WARNING", message)
 
     def log_info(self, message):
         """Logs an informational message to the history."""
+        if DEBUG>=2:
+            print(f"INFO: {message}")
         self._add_to_history("INFO", message)
 
     def _log_to_file(self,level, message):
@@ -67,8 +73,9 @@ class ErrorManager:
         self._error_timestamps = [t for t in self._error_timestamps if current_time - t <= 60]
 
         # Check if rate limit is exceeded
-        if len(self._error_timestamps) > 1:  # More than 1 error per minute
+        if len(self._error_timestamps) > self._error_rate_limit:  # More than 1 error per minute
             self.error_rate_limiter_reached = True
+            self._log_to_file("ERROR", f"Error rate limiter triggered: {len(self._error_timestamps)} errors in the last minute")
 
     def reset_error_rate_limiter(self):
         """Resets the error rate limiter flag."""

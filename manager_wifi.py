@@ -12,9 +12,10 @@ class WiFiManager:
     STATUS_CONNECTED = 2
     STATUS_ERROR = 3 # E.g., WLAN interface init failed
 
-    def __init__(self, ssid, password, retry_interval_ms=10000):
+    def __init__(self, ssid, password, hostname,retry_interval_ms=10000):
         self.ssid = ssid
         self.password = password
+        self.hostname = hostname
         self.retry_interval_ms = retry_interval_ms
         # self._wlan = None
         self._status = WiFiManager.STATUS_DISCONNECTED
@@ -25,6 +26,7 @@ class WiFiManager:
         try:
             self._wlan = network.WLAN(network.STA_IF)
             self._wlan.active(False) # Start inactive
+            network.hostname(self.hostname)
             self.error_manager.log_info("WiFiManager: WLAN interface initialized.")
             # Set initial status based on whether credentials are provided
             if self.ssid:

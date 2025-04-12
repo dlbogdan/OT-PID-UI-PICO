@@ -209,6 +209,8 @@ class HomematicRPCClient:
     
     async def list_all_rooms(self):
         """ASYNC Retrieves all room IDs from CCU3 via Room.listAll."""
+        # #disable this method for now
+        # return []
         error_manager.log_info("Async HC: Fetching room IDs...")
         response = await self._make_request("Room.listAll")
         result = response.get("result", []) if response and "result" in response else []
@@ -224,6 +226,8 @@ class HomematicRPCClient:
 
     async def get_room_details(self, room_id_str):
         """ASYNC Gets details for a specific room using its string ID."""
+        # #disable this method for now
+        # return None
         if not isinstance(room_id_str, str):
             error_manager.log_error(f"Async HC Error: get_room_details expects string ID, got {type(room_id_str)}")
             return None

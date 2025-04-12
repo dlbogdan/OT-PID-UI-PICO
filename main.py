@@ -122,25 +122,40 @@ async def poll_buttons(hid_controller: HIDController):
 
 
 async def monitor_error_rate_limiter(homematic_service: HomematicDataService, wifi_service: WiFiManager, led):
-    """Monitors the error rate limiter and pauses tasks if triggered."""
+    """Monitors the error rate limiter and performs a quick reset if triggered."""
     while True:
         if error_manager.error_rate_limiter_reached:
-            # Pause Homematic and WiFi services
-            homematic_service.set_paused(True)
-            wifi_service.disconnect()
+            error_manager.log_warning("Error rate limiter TRIGGERED! Performing reset cycle.") # Log trigger
 
-            # Set LED to solid red
-            led.set_color("red", blink=False)
+            # Pause/Disconnect services
+            try:
+                error_manager.log_info("Pausing Homematic service...")
+                homematic_service.set_paused(True)
+                error_manager.log_info("Disconnecting WiFi service...")
+                wifi_service.disconnect()
+            except Exception as e:
+                error_manager.log_error(f"Error pausing/disconnecting services during rate limit reset: {e}")
 
-            # Wait until the error rate limiter is reset
-            while error_manager.error_rate_limiter_reached:
-                await asyncio.sleep(1)
+            # Set LED to solid red briefly (visual cue)
+            try:
+                error_manager.log_info("Setting LED to solid red...")
+                led.set_color("red", blink=False)
+            except Exception as e:
+                error_manager.log_error(f"Error setting LED for rate limit reset: {e}")
 
-            # Resume services once the limiter is reset
+            # Immediately reset the limiter
+            error_manager.log_info("Resetting error rate limiter flag...")
+            error_manager.reset_error_rate_limiter()
+
+            # Immediately resume services
+            error_manager.log_info("Resuming services after rate limit reset...")
             homematic_service.set_paused(False)
-            wifi_service.update()  # Reconnect WiFi if needed
+            wifi_service.update()  # Trigger WiFi reconnection attempt
 
-        await asyncio.sleep(1)  # Check the limiter status every second
+            # LED will return to normal status based on main_tasks_loop on next cycle
+
+        # Check the limiter status periodically (e.g., every second)
+        await asyncio.sleep(1)
 
 
 async def main_tasks_loop(homematic_service: HomematicDataService, wifi_service: WiFiManager, led: RGBLED):
@@ -204,6 +219,7 @@ def main():
              display.load_custom_chars(CUSTOM_CHARS)
 
         display.show_message("System Booting", "Please wait...")
+        error_manager.log_error("Hardware reset detected.")
         led.direct_send_color("red") # Indicate booting
         print("Hardware Initialized.")
 
@@ -230,6 +246,7 @@ def main():
         config = ConfigManager("config.txt")
         ssid       = config.get_value("WIFI", "SSID")
         wifi_pass  = config.get_value("WIFI", "PASS")
+        hostname   = config.get_value("WIFI", "HOSTNAME", "OT-PID-UI-PICO")
         ccu_ip     = config.get_value("CCU3", "IP", "0.0.0.0") # Default IP
         ccu_user   = config.get_value("CCU3", "USER", "")
         ccu_pass   = config.get_value("CCU3", "PASS", "")
@@ -300,7 +317,7 @@ def main():
     # 4. Initialize Services (BEFORE Monitor Mode needs them)
     try:
         ccu_url = f"http://{ccu_ip}/api/homematic.cgi" # Use configured IP
-        wifi_service = WiFiManager(ssid, wifi_pass)
+        wifi_service = WiFiManager(ssid, wifi_pass, hostname)
         homematic_service = HomematicDataService(ccu_url, ccu_user, ccu_pass, valve_type)
         # Remove global assignments
         # _g_wifi_service = wifi_service
