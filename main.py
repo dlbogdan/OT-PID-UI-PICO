@@ -17,6 +17,7 @@ from manager_wifi import WiFiManager
 from service_homematic_rpc import HomematicDataService
 from controller_HID import HIDController # Import HIDController for type hint
 from manager_config import factory_reset
+from driver_opentherm import OpenthermUARTDriver, OpenthermController # <<<--- IMPORT OpenthermUART
 
 # Assuming DEBUG is defined in flags.py or set DEVELOPMENT_MODE directly
 try:
@@ -28,7 +29,7 @@ except ImportError:
 error_manager = ErrorManager() # Global error manager
 
 
-def handle_fatal_error(error_type, display, led, message, traceback=None):
+def handle_fatal_error(error_type, display, led, message, traceback=None): #todo: move to error_manager
     """Handles fatal errors by logging them and showing on display."""
     error_manager.log_fatal_error(error_type, message, traceback)
     try:
@@ -36,7 +37,7 @@ def handle_fatal_error(error_type, display, led, message, traceback=None):
         # Use direct_send_color as LED might not be updating anymore
         if led: led.direct_send_color("red")
     except Exception as e:
-        error_manager.log_error(f"Error during fatal error handling display: {e}")
+        error_manager.log_error(f"Fatal error handling display: {e}")
     time.sleep(2)
     if not DEVELOPMENT_MODE:
         reset()
@@ -82,6 +83,33 @@ async def hm_data_update(homematic_service: HomematicDataService):
         except Exception as e:
             error_manager.log_error(f"Error in hm_data_update: {e}")
         await asyncio.sleep(5) # Check if fetch is needed every 5 seconds
+
+async def opentherm_update(ot_controller: OpenthermController):
+    """Asynchronous function to handle OpenTherm communication via the controller."""
+    print("Starting OpenTherm controller update task...")
+    # Driver handles periodic sending internally
+    # Controller handles reading via its update() method
+
+    while True:
+        try:
+            # Call the controller's update method to read and process responses
+            await ot_controller.update()
+            
+            # Optional: Access controller state if needed after update
+            # last_type = ot_controller.last_response_type
+            # last_val = ot_controller.last_response_value
+            # if last_type and last_type != 'TIMEOUT':
+            #     print(f"[OT Task] Controller saw: {last_type}, {last_val}")
+
+            # Yield control
+            # The controller's update method has internal sleeps/timeouts
+            # We still need a sleep here to prevent this task from hogging CPU
+            await asyncio.sleep_ms(100) # Adjust sleep time as needed
+
+        except Exception as e:
+            error_manager.log_error(f"Error in opentherm_update (controller task): {e}")
+            await asyncio.sleep(5) # Wait longer after an error
+
 
 async def safe_task(coro, display, led):
     """Wraps a coroutine to catch fatal errors."""
@@ -197,6 +225,16 @@ OUT = 54.0
 # --- End Monitoring Pages ---
 
 # ----------------------------
+def _initialize_hardware()->tuple[DisplayController, RGBLED, HIDController, OpenthermUARTDriver]:
+    i2c = init_i2c()
+    mcp = init_mcp(i2c)
+    lcd_hw = init_lcd(mcp) 
+    led = init_rgb_led(mcp)
+    buttons = init_buttons(mcp) 
+    display = DisplayController(lcd_hw) 
+    ot_driver = OpenthermUARTDriver(10000) # <<<--- RE-ADD INITIALIZATION HERE
+    ot_driver.start_periodic_update()
+    return display, led, buttons, ot_driver
 
 def main():
     global _g_display, _g_led
@@ -205,12 +243,8 @@ def main():
 
     # 1. Initialize Hardware (using functions from hardware_config.py)
     try:
-        i2c = init_i2c()
-        mcp = init_mcp(i2c)
-        lcd_hw = init_lcd(mcp) 
-        led = init_rgb_led(mcp)
-        buttons = init_buttons(mcp) 
-        display = DisplayController(lcd_hw) 
+
+        display, led, buttons, ot_driver = _initialize_hardware()
         _g_display = display # Store globally for error handler
         _g_led = led       # Store globally for error handler
 
@@ -252,6 +286,13 @@ def main():
         ccu_user   = config.get_value("CCU3", "USER", "")
         ccu_pass   = config.get_value("CCU3", "PASS", "")
         valve_type = config.get_value("CCU3", "VALVE_DEVTYPE", "HmIP-eTRV") # Default valve type
+        # Ensure OT values are floats
+        ot_max_heating_setpoint = float(config.get_value("OT", "MAX_HEATING_SETPOINT", 72.0))
+        ot_manual_heating_setpoint = float(config.get_value("OT", "MANUAL_HEATING_SETPOINT", 55.0))
+        ot_dhw_setpoint = float(config.get_value("OT", "DHW_SETPOINT", 50.0))
+        # Ensure boolean value is correctly parsed
+        ot_manual_heating = str(config.get_value("OT", "MANUAL_HEATING", False)).lower() == 'true'
+
         # test_int   = int(config.get_value("TEST", "INT", 0))
         # test_float = float(config.get_value("TEST", "FLOAT", 0.0))
         # test_bool  = config.get_value("TEST", "BOOL", "False").lower() == 'true'
@@ -285,6 +326,13 @@ def main():
                 TextField("CCU3 Pass", ccu_pass, lambda v: save_config_callback("CCU3", "PASS", v)),
                 TextField("Valve Type", valve_type, lambda v: save_config_callback("CCU3", "VALVE_DEVTYPE", v)),
                 Action("Rescan", lambda: homematic_service.force_rescan()),
+            ]),
+            Menu("OpenTherm", [
+                FloatField("Max Heating Setpoint", ot_max_heating_setpoint, lambda v: save_config_callback("OT", "MAX_HEATING_SETPOINT", v)),
+                FloatField("Manual Heating Setpoint", ot_manual_heating_setpoint, lambda v: save_config_callback("OT", "MANUAL_HEATING_SETPOINT", v)),
+                FloatField("DHW Setpoint", ot_dhw_setpoint, lambda v: save_config_callback("OT", "DHW_SETPOINT", v)),
+                BoolField("Manual Heating", ot_manual_heating, lambda v: save_config_callback("OT", "MANUAL_HEATING", v)),
+
             ]),
             Menu("Device", [
                 Action("View Log", lambda: gui_manager.switch_mode("logview")),
@@ -344,7 +392,8 @@ def main():
     try:
         # GUIManager init automatically registers itself as observer with buttons device
         gui_manager = GUIManager(display, buttons)
-
+        ot_controller = OpenthermController(ot_driver, ot_max_heating_setpoint, ot_manual_heating_setpoint, ot_dhw_setpoint)
+        _g_ot_controller = ot_controller # Store globally for error handler
         # Create mode instances
         nav_mode = NavigationMode(root_menu) # Pass the root menu
         edit_mode = EditingMode()
@@ -383,8 +432,14 @@ def main():
             lambda: f"Kp: {Kp:.2f} Ki: {Ki:.2f}",
             lambda: f"Kd: {Kd:.2f} OUT: {OUT:.2f}"
         ))
-
-        # Page 4: Room with Max Valve Opening
+        monitor_mode.add_page(Page(
+            lambda: f"DHW SP: {ot_dhw_setpoint:.1f}",
+            lambda: f"Manual Heat: {ot_manual_heating}"
+        ))
+        monitor_mode.add_page(Page(
+            lambda: f"Heating SP: {_g_ot_controller.get_current_heating_setpoint():.1f}",
+            lambda: f"DHW SP: {_g_ot_controller.get_current_dhw_setpoint():.1f}"
+        ))
         monitor_mode.add_page(Page(
             # Line 1: Room Name with Max Valve
             lambda: f"Room: {homematic_service.max_valve_room_name}",
@@ -442,6 +497,7 @@ def main():
         loop.create_task(safe_task(log_view_task(log_view, gui_manager), display, led))
         if DEVELOPMENT_MODE:
             loop.create_task(safe_task(printout_hm_data(homematic_service), display, led))
+        loop.create_task(safe_task(opentherm_update(ot_controller), display, led)) # <<<--- Pass controller
         loop.create_task(safe_task(main_tasks_loop(homematic_service, wifi_service, led), display, led))
 
         print("System Running.")
@@ -454,6 +510,7 @@ def main():
     finally:
         # Cleanup? (e.g., turn off display/led)
         if display: display.clear()
+        if 'ot_driver' in locals() and ot_driver: ot_driver.close() # <<<--- ADD Cleanup
         if led: led.direct_send_color("black")
         print("System Shutdown.")
         asyncio.new_event_loop()  # Reset asyncio state (good practice in MicroPython)

@@ -383,17 +383,10 @@ class Field:
         """Finalizes the edit. Type conversion might happen here or in editor."""
         # Basic confirmation: just set value from editing_value
         # More complex fields might override this (like IPAddressEditor does via its confirm)
-        try:
-            # Attempt type conversion based on original value type if needed
-            value_type = type(self._value)
-            if value_type is bool:
-                self.value = self.editing_value.lower() == 'true'
-            else:
-                self.value = value_type(self.editing_value)
-        except (ValueError, TypeError):
-             print(f"Warning: Could not convert '{self.editing_value}' to {type(self._value)} for field '{self.name}'. Keeping previous value.")
-             self.value = self._value # Revert to original on conversion error
-        self.editing_value = str(self.value) # Sync editing value post-confirm/revert
+        # Sync editing value AFTER potential changes in subclasses or if no override exists.
+        # Note: Subclasses overriding confirm might sync editing_value themselves.
+        # This line acts as a fallback or standard behavior if not overridden.
+        self.editing_value = str(self.value)
 
         print(f"Confirmed '{self.name}': {self.value}")
         if self.callback:
@@ -573,15 +566,10 @@ class NavigationMode(UIMode):
         self.root_menu = root_menu
         # Menu stack for navigating back. Start with root.
         self.menu_stack = [root_menu]
-        # Scrolling state needs to be managed per-mode if modes have different scroll needs
-        self.scroll_pos = 0
-        self.scroll_speed = 1
-        self.scroll_pause_ticks = 20 # Number of render cycles to pause at ends
-        self.scroll_pause_counter = 0
-        self.last_scroll_time = 0
-        self.scroll_interval_ms = 200 # Milliseconds between scroll steps
-
-        self._current_display_text = "" # Cache rendered text for scrolling
+        # Scrolling state is now fully managed by the DisplayController.
+        # Removed: self.scroll_pos, self.scroll_speed, self.scroll_pause_ticks,
+        #          self.scroll_pause_counter, self.last_scroll_time, self.scroll_interval_ms
+        # Removed: self._current_display_text
 
     @property
     def current_menu(self):
@@ -592,7 +580,7 @@ class NavigationMode(UIMode):
         print("Entering Navigation Mode")
         # If context specifies a menu, try to navigate to it? Complex.
         # For now, just ensure we reset scroll on entry.
-        self._reset_scroll()
+        # Removed call to self._reset_scroll()
         manager.render() # Render immediately on entering
 
     def exit(self, manager):
@@ -610,8 +598,8 @@ class NavigationMode(UIMode):
 
             item = menu.items[menu.selected]
             item_text = item.render(0) # Render with more space for scrolling
-           
-            #self._current_display_text = raw_item_text
+
+            # Removed assignment to self._current_display_text
             # Optional: Add indicator for non-editable fields
             if isinstance(item, Field) and not item.is_editable():
                 # Add indicator (e.g., at the end) if space allows
@@ -639,12 +627,12 @@ class NavigationMode(UIMode):
             if event.button == ButtonName.UP:
                 if num_items > 0:
                     menu.selected = (menu.selected - 1 + num_items) % num_items
-                    self._reset_scroll() # Reset scroll on selection change
+                    # Removed call to self._reset_scroll()
                     handled = True
             elif event.button == ButtonName.DOWN:
                  if num_items > 0:
                     menu.selected = (menu.selected + 1) % num_items
-                    self._reset_scroll()
+                    # Removed call to self._reset_scroll()
                     handled = True
             elif event.button == ButtonName.SELECT:
                 if num_items > 0:
@@ -653,7 +641,7 @@ class NavigationMode(UIMode):
                         # Navigate into submenu
                         self.menu_stack.append(item)
                         item.selected = 0 # Reset selection in new menu
-                        self._reset_scroll()
+                        # Removed call to self._reset_scroll()
                         handled = True
                     elif isinstance(item, Field) and item.is_editable():
                         # Switch to editing mode, pass field as context
@@ -677,7 +665,7 @@ class NavigationMode(UIMode):
                 # Go back up the menu stack OR switch to monitoring if at root
                 if len(self.menu_stack) > 1:
                     self.menu_stack.pop() # Remove current menu from stack
-                    self._reset_scroll()
+                    # Removed call to self._reset_scroll()
                     handled = True
                 elif len(self.menu_stack) == 1 and "monitoring" in manager.modes:
                     # At root menu and monitoring exists, switch to it
@@ -692,40 +680,9 @@ class NavigationMode(UIMode):
 
         return handled
 
-    def _reset_scroll(self):
-        """Resets scrolling state for the current item."""
-        self.scroll_pos = 0
-        self.scroll_speed = 1
-        self.scroll_pause_counter = self.scroll_pause_ticks
-        self.last_scroll_time = time.ticks_ms() # Reset time to avoid immediate scroll
+    # Removed _reset_scroll method
 
-    def _scroll_text(self, text, width):
-        """Scrolls text if it's longer than the display width."""
-        # Assumes text length > width
-        max_scroll = len(text) - width
-        current_time = time.ticks_ms()
-
-        # Check if enough time has passed
-        if time.ticks_diff(current_time, self.last_scroll_time) >= self.scroll_interval_ms:
-            self.last_scroll_time = current_time
-
-            if self.scroll_pause_counter > 0:
-                self.scroll_pause_counter -= 1
-            else:
-                # Advance scroll position
-                self.scroll_pos += self.scroll_speed
-                # Check bounds and reverse direction / pause
-                if self.scroll_pos >= max_scroll:
-                    self.scroll_pos = max_scroll
-                    self.scroll_speed = -1 # Change direction
-                    self.scroll_pause_counter = self.scroll_pause_ticks # Pause at end
-                elif self.scroll_pos <= 0:
-                    self.scroll_pos = 0
-                    self.scroll_speed = 1 # Change direction
-                    self.scroll_pause_counter = self.scroll_pause_ticks # Pause at beginning
-
-        # Return the currently visible portion
-        return text[self.scroll_pos : self.scroll_pos + width]
+    # Removed _scroll_text method
 
 # --- Monitoring Mode Components ---
 class MonitorPage:
