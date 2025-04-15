@@ -11,7 +11,10 @@
         "~/.micropico-stubs/included"
     ],
     "python.analysis.extraPaths": [
-        "~/.micropico-stubs/included"
+        "~/.micropico-stubs/included",
+        "${workspaceFolder}/lib/",
+        "${workspaceFolder}/drivers/"
     ],
+    
     "circuitpython.board.version": null
 }

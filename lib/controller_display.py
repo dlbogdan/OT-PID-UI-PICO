@@ -1,4 +1,4 @@
-from driver_lcd import LCD
+from drivers.driver_lcd import LCD
 import time
 from machine import Timer
 

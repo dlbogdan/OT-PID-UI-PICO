@@ -17,7 +17,7 @@ from manager_wifi import WiFiManager
 from service_homematic_rpc import HomematicDataService
 from controller_HID import HIDController # Import HIDController for type hint
 from manager_config import factory_reset
-from driver_opentherm import OpenthermUARTDriver, OpenthermController # <<<--- IMPORT OpenthermUART
+from drivers.driver_opentherm import OpenthermUARTDriver, OpenthermController # <<<--- IMPORT OpenthermUART
 
 # Assuming DEBUG is defined in flags.py or set DEVELOPMENT_MODE directly
 try:
@@ -240,6 +240,9 @@ def main():
     global _g_display, _g_led
     # Remove global service variables
     # global _g_wifi_service, _g_homematic_service
+    # set hostname to unique hardware name but truncated to 14 characters
+    hostname = unique_hardware_name()[:15] # truncated to 15 characters, hostname compatibility
+    mqtt_client_id = unique_hardware_name()[:23] # truncated to 23 characters, MQTT spec    
 
     # 1. Initialize Hardware (using functions from hardware_config.py)
     try:
@@ -281,7 +284,6 @@ def main():
         config = ConfigManager("config.txt")
         ssid       = config.get_value("WIFI", "SSID")
         wifi_pass  = config.get_value("WIFI", "PASS")
-        hostname   = config.get_value("WIFI", "HOSTNAME", "OT-PID-UI-PICO")
         ccu_ip     = config.get_value("CCU3", "IP", "0.0.0.0") # Default IP
         ccu_user   = config.get_value("CCU3", "USER", "")
         ccu_pass   = config.get_value("CCU3", "PASS", "")

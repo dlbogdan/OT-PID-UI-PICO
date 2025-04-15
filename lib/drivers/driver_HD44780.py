@@ -1,6 +1,6 @@
 #driver_HD44780.py - Driver for HD44780 LCD using any Pin-compatible interface
 import utime
-from driver_lcd import LCD
+from drivers.driver_lcd import LCD
 
 # --- Custom Character Definitions ---
 # (CUSTOM_CHARS list as defined above)

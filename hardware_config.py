@@ -75,11 +75,21 @@ CUSTOM_CHARS = [
 
 # --- Hardware Initialization Functions ---
 from machine import Pin, I2C
-from driver_mcp23017 import Portexpander, McpPin
-from driver_lcd import LCD
-from driver_HD44780 import LCD1602
-from driver_rgbled import RGBLED
+from drivers.driver_mcp23017 import Portexpander, McpPin
+from drivers.driver_lcd import LCD
+from drivers.driver_HD44780 import LCD1602
+from drivers.driver_rgbled import RGBLED
 from controller_HID import HIDController
+from machine import unique_id
+import binascii
+
+def unique_hardware_name():
+    """Generate a unique name for the device."""
+    try:
+        name=binascii.hexlify(unique_id())
+        return "OT-CTRL-"+name.decode()
+    except Exception as e:
+        return "OT-CTRL-GENERIC"
 
 def init_i2c():
     """Initialize I2C bus and return the instance."""
