@@ -5,7 +5,7 @@ from hardware_config import *  # Includes init functions and constants
 from controller_display import DisplayController
 from gui import (  # Import the refactored components
     GUIManager, NavigationMode, EditingMode,
-    Menu, IntField, FloatField, BoolField, Action, Field, IPAddressField, TextField,
+    Menu, FloatField, BoolField, Action, IPAddressField, TextField,
     MonitoringMode, # <-- Import MonitoringMode
     Page, LogView    # <-- Import SimplePage
 )
@@ -186,7 +186,7 @@ async def monitor_error_rate_limiter(homematic_service: HomematicDataService, wi
         await asyncio.sleep(1)
 
 
-async def main_tasks_loop(homematic_service: HomematicDataService, wifi_service: WiFiManager, led: RGBLED):
+async def main_tasks_loop(homematic_service: HomematicDataService, ot_controller: OpenthermController, wifi_service: WiFiManager, led: RGBLED):
     """Main loop managing LED status based on service states."""
     # Initial LED state
     led.set_color("red", blink=False) # Start red until connections are up
@@ -205,6 +205,12 @@ async def main_tasks_loop(homematic_service: HomematicDataService, wifi_service:
             # WiFi Not OK -> Red Blink
             homematic_service.set_paused(True) # Pause HM fetching if WiFi is down
             led.set_color("red", blink=True, duration_on=1000, duration_off=1000)
+
+        if ot_manual_heating:
+            if ot_manual_heating_setpoint != ot_controller.get_current_heating_setpoint():
+                ot_controller.set_heating_setpoint(ot_manual_heating_setpoint) #todo move this to the controller class
+                print(f"Set heating setpoint to {ot_manual_heating_setpoint}")
+                print(f"fix me! this is a hack! we should not be setting the setpoint here, but in the controller class")
 
         await asyncio.sleep(1) # Check status every second
 # Use global display/led for handle_fatal_error access if tasks fail early
@@ -235,6 +241,21 @@ def _initialize_hardware()->tuple[DisplayController, RGBLED, HIDController, Open
     ot_driver = OpenthermUARTDriver(10000) # <<<--- RE-ADD INITIALIZATION HERE
     ot_driver.start_periodic_update()
     return display, led, buttons, ot_driver
+
+def load_all_config_values(config):  #refactor this somehow, it isn't a good idea to have global variables
+        global ssid, wifi_pass, ccu_ip, ccu_user, ccu_pass, valve_type, ot_max_heating_setpoint, ot_manual_heating_setpoint, ot_dhw_setpoint, ot_manual_heating
+        ssid       = config.get_value("WIFI", "SSID")
+        wifi_pass  = config.get_value("WIFI", "PASS")
+        ccu_ip     = config.get_value("CCU3", "IP", "0.0.0.0") # Default IP
+        ccu_user   = config.get_value("CCU3", "USER", "")
+        ccu_pass   = config.get_value("CCU3", "PASS", "")
+        valve_type = config.get_value("CCU3", "VALVE_DEVTYPE", "HmIP-eTRV") # Default valve type
+        # Ensure OT values are floats
+        ot_max_heating_setpoint = float(config.get_value("OT", "MAX_HEATING_SETPOINT", 72.0))
+        ot_manual_heating_setpoint = float(config.get_value("OT", "MANUAL_HEATING_SETPOINT", 55.0))
+        ot_dhw_setpoint = float(config.get_value("OT", "DHW_SETPOINT", 50.0))
+        # Ensure boolean value is correctly parsed
+        ot_manual_heating = str(config.get_value("OT", "MANUAL_HEATING", False)).lower() == 'true'
 
 def main():
     global _g_display, _g_led
@@ -282,18 +303,7 @@ def main():
     # 2. Initialize Configuration
     try:
         config = ConfigManager("config.txt")
-        ssid       = config.get_value("WIFI", "SSID")
-        wifi_pass  = config.get_value("WIFI", "PASS")
-        ccu_ip     = config.get_value("CCU3", "IP", "0.0.0.0") # Default IP
-        ccu_user   = config.get_value("CCU3", "USER", "")
-        ccu_pass   = config.get_value("CCU3", "PASS", "")
-        valve_type = config.get_value("CCU3", "VALVE_DEVTYPE", "HmIP-eTRV") # Default valve type
-        # Ensure OT values are floats
-        ot_max_heating_setpoint = float(config.get_value("OT", "MAX_HEATING_SETPOINT", 72.0))
-        ot_manual_heating_setpoint = float(config.get_value("OT", "MANUAL_HEATING_SETPOINT", 55.0))
-        ot_dhw_setpoint = float(config.get_value("OT", "DHW_SETPOINT", 50.0))
-        # Ensure boolean value is correctly parsed
-        ot_manual_heating = str(config.get_value("OT", "MANUAL_HEATING", False)).lower() == 'true'
+        load_all_config_values(config)
 
         # test_int   = int(config.get_value("TEST", "INT", 0))
         # test_float = float(config.get_value("TEST", "FLOAT", 0.0))
@@ -304,10 +314,14 @@ def main():
     except Exception as e:
         handle_fatal_error("ConfigError", display, led, str(e))
 
+    
+
     # 3. Build the Menu Structure
     def save_config_callback(section, key, value):
         config.set_value(section, key, value)
         config.save_config() # Save immediately on change
+        load_all_config_values(config) #reload all config values
+
 
     def save_and_reboot():
         display.show_message("Action", "Saving & Reboot")
@@ -500,7 +514,7 @@ def main():
         if DEVELOPMENT_MODE:
             loop.create_task(safe_task(printout_hm_data(homematic_service), display, led))
         loop.create_task(safe_task(opentherm_update(ot_controller), display, led)) # <<<--- Pass controller
-        loop.create_task(safe_task(main_tasks_loop(homematic_service, wifi_service, led), display, led))
+        loop.create_task(safe_task(main_tasks_loop(homematic_service, ot_controller, wifi_service, led), display, led))
 
         print("System Running.")
         loop.run_forever()  # Start the asyncio scheduler
