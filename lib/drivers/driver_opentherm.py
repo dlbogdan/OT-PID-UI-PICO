@@ -87,17 +87,52 @@ class OpenthermUARTDriver:
         #self.uart.write(command.encode('ascii'))
         self.uart.write(command.encode('ascii'))
 
+
+    def relinquish_control(self):
+        """Sends CS=0\\r command to relinquish control."""
+        self.stop_periodic_update()
+        self._send_command("CS", 0)
+        self._send_command("CH", 0)
+        print(f"[OT Driver] Relinquished control")
+
+    def takeover_control(self):
+        """Sends CH=1\\r command to take control over the heating."""
+        # self._send_command("CS", 17)
+        self.start_periodic_update()
+        self._send_command("CH", 1)
+        print(f"[OT Driver] Took over control")
+    
+
+    def disable_heating(self):
+        """Sends CS=10\\r command to disable heating."""
+        self.stop_periodic_update()
+        self._send_command("CS", 10)
+        self._send_command("CH", 0)
+        print(f"[OT Driver] Disabled heating")
+
+    def enable_heating(self):
+        self.start_periodic_update()
+        self._send_command("CH", 1)
+        print(f"[OT Driver] Enabled heating")   
+
     def set_boiler_max_setpoint(self, max_setpoint: float):
         """Sends SH=<temp>\\r command."""
         self._send_command("SH", max_setpoint)
+        print(f"[OT Driver] Set boiler max setpoint to {max_setpoint:.2f}")
 
-    def set_boiler_control_setpoint(self, control_setpoint: float):
+
+    def set_heating_control_setpoint(self, control_setpoint: float):
         """Sends CS=<temp>\r command immediately and stores it for periodic updates."""
         self._periodic_heating_setpoint = control_setpoint # Store for periodic task
         # Reset timer if we manually send, so periodic doesn't send immediately after
         self._last_periodic_send_time = time.ticks_ms()
         self._send_command("CS", control_setpoint) # Send immediately
+        print(f"[OT Driver] Set heating control setpoint to {control_setpoint:.2f}")
 
+    def set_dhw_control_setpoint(self, control_setpoint: float):
+        """Sends TD=<temp>\\r command."""
+        self._send_command("SW", control_setpoint)
+        print(f"[OT Driver] Set dhw control setpoint to {control_setpoint:.2f}")
     async def read_response(self, timeout_ms: int = 1000):
         """
         Reads and parses a line from the OpenTherm Gateway asynchronously.
@@ -125,7 +160,7 @@ class OpenthermUARTDriver:
 
         # Check if loop ended due to timeout or finding a line
         if not line_bytes or line_bytes[-1:] != b'\r':
-            print("[OTGW] Read timeout or incomplete line.")
+            #print("[OTGW] Read timeout or incomplete line.")
             # Consider returning partial data if needed: ('OTHER', line_bytes)
             return ('TIMEOUT', None)
 
@@ -184,49 +219,123 @@ class OpenthermUARTDriver:
 
 
 class OpenthermController:
-    def __init__(self,ot_driver: OpenthermUARTDriver, max_heating_setpoint: float, default_heating_setpoint: float, default_dhw_setpoint: float):
+    def __init__(self,ot_driver: OpenthermUARTDriver, max_heating_setpoint: float):
         self.ot_max_heating_setpoint = max_heating_setpoint
-        self.ot_current_heating_setpoint = default_heating_setpoint
-        self.ot_current_dhw_setpoint = default_dhw_setpoint
+        self.ot_current_heating_setpoint = 60
+        self.ot_current_dhw_setpoint = 60
         self.ot_driver = ot_driver
         # Internal state for last response
         self.last_response_type = None
         self.last_response_value = None
         self.last_read_time = None
+        self._is_connected = False
+        self._is_heating_enabled = False
+        self._is_dhw_enabled = False
+        self._is_control_enabled = False
+
+        self.ot_driver.disable_heating()
+        self.ot_driver.relinquish_control()
+
         # Set the initial desired setpoint in the driver
         # This will also store it for periodic updates
-        self.ot_driver.set_boiler_control_setpoint(self.ot_current_heating_setpoint)
+        #self.ot_driver.set_heating_control_setpoint(self.ot_current_heating_setpoint)
         # Also potentially set max setpoint initially
-        # self.ot_driver.set_boiler_max_setpoint(self.ot_max_heating_setpoint)
+        # self.ot_driver.set_boiler_max_setpoint(self.ot_max_heating_setpoint)\
+
 
     def get_current_heating_setpoint(self):
         return self.ot_current_heating_setpoint
     def get_current_dhw_setpoint(self):
         return self.ot_current_dhw_setpoint
+    
+
     def set_heating_setpoint(self, setpoint: float):
         # Apply bounds if necessary (e.g., ensure <= max_heating_setpoint)
         # setpoint = min(setpoint, self.ot_max_heating_setpoint)
+        if not self._is_control_enabled:
+            self.ot_driver.takeover_control()
+            self._is_control_enabled = True
+        
+        if not self._is_heating_enabled:
+            self.ot_driver.enable_heating()
+            self._is_heating_enabled = True
         self.ot_current_heating_setpoint = setpoint
-        # This call now sends immediately AND updates the value for the driver's periodic task
-        self.ot_driver.set_boiler_control_setpoint(setpoint)
-    def set_dhw_setpoint(self, setpoint: float):
-        self.ot_current_dhw_setpoint = setpoint
-        # DHW setpoint (TD=) is a different command, not CS=
-        # Need a specific method in the driver like:
-        # self.ot_driver.set_dhw_setpoint(setpoint) # Assuming TD= command
-        print("[Controller] DHW setpoint changed, but driver method not implemented yet.")
+        self.ot_driver.set_heating_control_setpoint(setpoint)
+        print(f"[OT Controller] Set heating setpoint to {setpoint:.2f}")
+            
 
+    def set_dhw_setpoint(self, setpoint: float):
+        if not self._is_control_enabled:
+            self.ot_driver.takeover_control()
+            self._is_control_enabled = True
+        
+        if not self._is_dhw_enabled:
+            self._is_dhw_enabled = True
+        
+        self.ot_current_dhw_setpoint = setpoint
+        # This call now sends immediately AND updates the value for the driver's periodic task
+        self.ot_driver.set_dhw_control_setpoint(setpoint)
+        print(f"[OT Controller] Set dhw setpoint to {setpoint:.2f}")
+
+    def enable_dhw(self):
+        if not self._is_dhw_enabled:        
+            self.ot_driver.set_dhw_control_setpoint(self.ot_current_dhw_setpoint)
+            self._is_dhw_enabled = True
+            print(f"[OT Controller] Enabled dhw")
+    
+    def enable_heating(self):
+        if not self._is_heating_enabled:
+            self.ot_driver.set_heating_control_setpoint(self.ot_current_heating_setpoint)
+            self._is_heating_enabled = True
+            print(f"[OT Controller] Enabled heating")
+
+    def disable_heating(self):
+        if self._is_heating_enabled:
+            self.ot_driver.disable_heating()
+            self._is_heating_enabled = False
+            print(f"[OT Controller] Disabled heating")
+
+    def disable_dhw(self):
+        if self._is_dhw_enabled:
+            self.ot_driver.set_dhw_control_setpoint(20)
+            self._is_dhw_enabled = False
+            print(f"[OT Controller] Disabled dhw")
+
+    def disable_controller(self):
+        if self._is_control_enabled:
+            self.ot_driver.relinquish_control()
+            self._is_control_enabled = False
+            print(f"[OT Controller] Disabled controller")   
+        # self._is_heating_enabled = False
+        # self._is_dhw_enabled = False
+
+    def enable_controller(self):
+        if not self._is_control_enabled:
+            self.ot_driver.takeover_control()
+            self._is_control_enabled = True
+            print(f"[OT Controller] Enabled controller")    
+        # self.disable_heating() # Disable heating and DHW
+        # self.disable_dhw() 
+
+
+
+    def is_connected(self):
+        return self._is_connected
+    
     async def update(self):
         """
         Reads the next response from the OpenTherm driver and updates internal state.
         Called periodically by the main loop's opentherm_update task.
         """
+        if not self._is_control_enabled:
+            return
         try:
             # Read response using the driver
             response_type, response_value = await self.ot_driver.read_response(timeout_ms=1500) # Use a reasonable timeout
             self.last_read_time = time.ticks_ms()
 
             if response_type != 'TIMEOUT':
+                self._is_connected = True
                 self.last_response_type = response_type
                 self.last_response_value = response_value
                 # Optional: Add logic here to react to specific responses
@@ -237,6 +346,7 @@ class OpenthermController:
                     pass 
             else:
                 # Optional: Handle timeout within the controller if needed
+                self._is_connected = False
                 pass
 
         except Exception as e:
