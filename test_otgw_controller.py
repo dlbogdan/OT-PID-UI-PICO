@@ -39,6 +39,11 @@ def print_menu():
     print("10. Set Control Setpoint 2 (C2)")
     print("11. Toggle CH2 Enable (H2)")
     print("R. Reset Boiler Counter (RS)")
+    print("P. Request Priority Message (PM)")
+    print("--- Thermostat Overrides ---")
+    print("T. Set Temporary Room Setpoint (TT)")
+    print("C. Set Constant Room Setpoint (TC)")
+    print("S. Set Thermostat Clock (SC)")
     print("M. Show Menu")
     print("Enter choice:")
 
@@ -137,6 +142,37 @@ async def process_command(cmd, controller):
             uasyncio.create_task(controller.reset_boiler_counter(counter_name))
         except Exception as e:
             print(f"  Error getting input: {e}")
+    elif cmd == 'p': # Request Priority Message
+        try:
+            value = int(input("  Enter Data ID to request (0-255): "))
+            print(f"Requesting priority message for ID {value}...")
+            uasyncio.create_task(controller.request_priority_message(value))
+        except ValueError:
+            print("  Invalid Data ID.")
+    elif cmd == 't': # Set Temporary Setpoint (TT)
+        try:
+            value = float(input("  Enter Temporary Setpoint (0.0-30.0, 0=cancel): "))
+            print(f"Setting TT to {value:.2f}...")
+            uasyncio.create_task(controller.set_temporary_room_setpoint_override(value))
+        except ValueError:
+            print("  Invalid temperature.")
+    elif cmd == 'c': # Set Constant Setpoint (TC)
+        try:
+            value = float(input("  Enter Constant Setpoint (0.0-30.0, 0=cancel): "))
+            print(f"Setting TC to {value:.2f}...")
+            uasyncio.create_task(controller.set_constant_room_setpoint_override(value))
+        except ValueError:
+            print("  Invalid temperature.")
+    elif cmd == 's': # Set Clock (SC)
+        try:
+            time_str = input("  Enter Time (HH:MM): ").strip()
+            day_int = int(input("  Enter Day of Week (1=Mon, 7=Sun): "))
+            print(f"Setting SC to {time_str} / {day_int}...")
+            uasyncio.create_task(controller.set_thermostat_clock(time_str, day_int))
+        except ValueError:
+            print("  Invalid day or time format.")
+        except Exception as e:
+             print(f"  Error setting clock: {e}")
     elif cmd == 'm':
         pass # Menu will be printed by the main loop after command processing
     else:

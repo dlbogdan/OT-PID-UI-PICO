@@ -88,6 +88,7 @@ class OpenThermController:
         self._control_setpoint_override = 0.0 # Stores the value set by CS command
         self._control_setpoint2_override = 0.0 # Stores the value set by C2 command
         self._last_keep_alive_time = 0
+        self._last_fault_present_state = None # Track previous fault state
 
         self.error_manager.log_info("OpenThermController initialized.")
 
@@ -171,6 +172,23 @@ class OpenThermController:
                     'master': self._parse_bitfield(val_hb, OT_STATUS_MASTER_HB),
                     'slave': self._parse_bitfield(val_lb, OT_STATUS_SLAVE_LB)
                 }
+                # --- Check for Fault Indication change ---
+                if isinstance(parsed_value.get('slave'), dict):
+                    current_fault_state = parsed_value['slave'].get('Fault Indication')
+                    # Only trigger if state is known and has changed
+                    if current_fault_state is not None and \
+                       self._last_fault_present_state is not None and \
+                       current_fault_state != self._last_fault_present_state:
+                        self.error_manager.log_info(
+                            f"Fault Indication changed from {self._last_fault_present_state} to {current_fault_state}. Requesting ID 5.")
+                        # Run request in background, don't block parser
+                        uasyncio.create_task(self.request_priority_message(5))
+
+                    # Update last known state if successfully parsed
+                    if current_fault_state is not None:
+                         self._last_fault_present_state = current_fault_state
+                # --- End Fault Check ---
+
             elif data_id == 5: # Fault Flags & OEM Code
                  parsed_value = {
                      'oem_code': val_hb, # Store OEM code as raw byte
@@ -179,7 +197,6 @@ class OpenThermController:
             elif data_id in [1, 7, 8, 14, 16, 17, 18, 19, 23, 24, 25, 26, 27, 28, 31, 56, 57]: # f8.8 values
                 parsed_value = self._parse_f88(val_hb, val_lb)
             elif data_id == 33: # s16 (Boiler exhaust temperature)
-                # Assuming s16 uses the same logic as f8.8 but without division
                 value = raw_value
                 if val_hb & 0x80:
                     value = -( ( (~value) + 1 ) & 0xFFFF )
@@ -189,7 +206,7 @@ class OpenThermController:
                     'lower': self._parse_s8(val_lb),
                     'upper': self._parse_s8(val_hb)
                 }
-            elif data_id == 70: # V/H Status flags - Add mapping if needed
+            elif data_id == 70: # V/H Control Status flags - Add mapping if needed
                  parsed_value = {
                      'master': self._parse_bitfield(val_hb, {}), # Placeholder mapping
                      'slave': self._parse_bitfield(val_lb, {})  # Placeholder mapping
@@ -381,6 +398,10 @@ class OpenThermController:
             self.error_manager.log_info("Successfully relinquished control (CS=0 sent).")
             self._is_controller_active = False
             self._control_setpoint_override = 0.0
+            self._control_setpoint2_override = 0.0 # Also reset C2 override
+            # Also need to reset CH and H2? OTGW might do this when CS=0?
+            # await self._send_command("CH", 0) # Maybe not needed? Test.
+            # await self._send_command("H2", 0)
             return True
 
     async def set_control_setpoint(self, temp):
@@ -399,7 +420,7 @@ class OpenThermController:
         return False
 
     async def set_dhw_setpoint(self, temp):
-        """Sets the Domestic Hot Water setpoint (ID=56)."""
+        """Sets the Domestic Hot Water setpoint (SW command, ID 56)."""
         # This might not require _is_controller_active, depends on boiler/thermostat interaction
         # Check docs: "This command is only effective with boilers that support this function."
         if temp < 0 or temp > 80: # Example plausible range
@@ -409,8 +430,7 @@ class OpenThermController:
         return status == OTGW_RESPONSE_OK
 
     async def set_max_modulation(self, percentage):
-         """Sets the Maximum Relative Modulation level (ID=14)."""
-         # This might not require _is_controller_active
+         """Sets the Maximum Relative Modulation level (MM command, ID 14)."""
          if percentage < 0 or percentage > 100:
              self.error_manager.log_warning(f"Max Modulation {percentage} out of range (0-100).")
              return False
@@ -484,6 +504,14 @@ class OpenThermController:
         status, _ = await self._send_command("RS", counter_name)
         return status == OTGW_RESPONSE_OK
 
+    async def request_priority_message(self, data_id):
+        """Sends a one-time priority message request (PM command) to the boiler."""
+        if not isinstance(data_id, int) or not (0 <= data_id <= 255):
+            self.error_manager.log_warning(f"Invalid Data ID for PM command: {data_id}")
+            return False
+        status, _ = await self._send_command("PM", data_id)
+        return status == OTGW_RESPONSE_OK
+
     # --- END: Newly Added Boiler Command Methods ---
 
     async def set_hot_water_mode(self, state):
@@ -498,6 +526,38 @@ class OpenThermController:
 
          status, _ = await self._send_command("HW", state)
          return status == OTGW_RESPONSE_OK
+
+    # --- Thermostat Override Commands ---
+    async def set_temporary_room_setpoint_override(self, temp):
+        """Temporarily overrides the thermostat room setpoint (TT command). 0 cancels."""
+        if not isinstance(temp, (float, int)) or not (0.0 <= temp <= 30.0):
+            self.error_manager.log_warning(f"Invalid temp for TT command (0.0-30.0): {temp}")
+            return False
+        status, _ = await self._send_command("TT", f"{temp:.2f}") # Ensure 2 decimal places
+        return status == OTGW_RESPONSE_OK
+
+    async def set_constant_room_setpoint_override(self, temp):
+        """Overrides the thermostat room setpoint indefinitely (TC command). 0 cancels."""
+        if not isinstance(temp, (float, int)) or not (0.0 <= temp <= 30.0):
+            self.error_manager.log_warning(f"Invalid temp for TC command (0.0-30.0): {temp}")
+            return False
+        status, _ = await self._send_command("TC", f"{temp:.2f}") # Ensure 2 decimal places
+        return status == OTGW_RESPONSE_OK
+
+    async def set_thermostat_clock(self, time_str, day_int):
+        """Sets the time and day on the thermostat (SC command)."""
+        # Basic validation - more robust parsing could be added
+        if not isinstance(day_int, int) or not (1 <= day_int <= 7):
+            self.error_manager.log_warning(f"Invalid day for SC command (1-7): {day_int}")
+            return False
+        if not isinstance(time_str, str) or len(time_str) != 5 or time_str[2] != ':':
+             self.error_manager.log_warning(f"Invalid time format for SC command (HH:MM): {time_str}")
+             return False
+        # Could add checks for valid HH (00-23) and MM (00-59)
+
+        value_str = f"{time_str}/{day_int}"
+        status, _ = await self._send_command("SC", value_str)
+        return status == OTGW_RESPONSE_OK
 
     # --- Status Methods ---
     def get_status(self):
