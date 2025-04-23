@@ -1,595 +1,403 @@
+"""
+main.py - cleaned, with monitoring pages & error-rate-limiter task restored
+
+Changelog vs previous clean version
+----------------------------------
+* Re-added the Valve / PID / OT set-point & room pages to `MonitoringMode`.
+* Restored `error_rate_limiter_task` so bursts of errors trigger the short reset
+  cycle as before.
+* Brought back placeholder PID constants (`Kp`, `Ki`, `Kd`, `OUT`).
+* `schedule_tasks()` now registers the new limiter-watch task.
+
+Everything else remains modularised.
+"""
+
+# --------------------------------------------------------------------------- #
+#  Imports
+# --------------------------------------------------------------------------- #
 import utime as time
 import uasyncio as asyncio
-import uos # <<<--- ADD THIS IMPORT
-from hardware_config import *  # Includes init functions and constants
-from controller_display import DisplayController
-from gui import (  # Import the refactored components
-    GUIManager, NavigationMode, EditingMode,
-    Menu, FloatField, BoolField, Action, IPAddressField, TextField,
-    MonitoringMode, # <-- Import MonitoringMode
-    Page, LogView    # <-- Import SimplePage
-)
-from manager_error import ErrorManager
+import uos
 
 from machine import reset
-from manager_config import ConfigManager        # Config file manager
+
+# 3rd‑party / project modules
+from hardware_config import (
+    init_i2c, init_mcp, init_lcd, init_rgb_led, init_buttons,
+    unique_hardware_name, CUSTOM_CHARS,
+)
+from controller_display import DisplayController
+from controller_HID import HIDController
+from drivers.driver_opentherm import OpenthermUARTDriver, OpenthermController
+from gui import (
+    GUIManager, NavigationMode, EditingMode,
+    Menu, FloatField, BoolField, Action, IPAddressField, TextField,
+    MonitoringMode, Page, LogView,
+)
+from manager_config import ConfigManager, factory_reset
+from manager_error import ErrorManager
 from manager_wifi import WiFiManager
 from service_homematic_rpc import HomematicDataService
-from controller_HID import HIDController # Import HIDController for type hint
-from manager_config import factory_reset
-from drivers.driver_opentherm import OpenthermUARTDriver, OpenthermController # <<<--- IMPORT OpenthermUART
-from lib.service_mqtt import MQTTClientService
 
-# Assuming DEBUG is defined in flags.py or set DEVELOPMENT_MODE directly
-try:
-    from flags import DEBUG
-    DEVELOPMENT_MODE = DEBUG
-except ImportError:
-    DEVELOPMENT_MODE = False # Default if flags.py doesn't exist or DEBUG isn't defined
+DEVELOPMENT_MODE=1
+error_manager = ErrorManager()
+DEBUG = error_manager.get_debuglevel()
+# --------------------------------------------------------------------------- #
+#  Globals & runtime state
+# --------------------------------------------------------------------------- #
+# error_manager = ErrorManager()
+# global error_manager
 
-error_manager = ErrorManager() # Global error manager
+class RuntimeState:
+    """Mutable container for runtime flags."""
 
-ot_enable_controller = False
-ot_enable_heating = False
-ot_enable_dhw = False
-ot_manual_heating = False
-ot_manual_heating_setpoint = 55.0
+    def __init__(self):
+        pass  # No longer storing OT state here
 
-def handle_fatal_error(error_type, display, led, message, traceback=None): #todo: move to error_manager
-    """Handles fatal errors by logging them and showing on display."""
-    error_manager.log_fatal_error(error_type, message, traceback)
+
+STATE = RuntimeState()
+
+# Placeholder PID constants used by one of the monitoring pages
+Kp, Ki, Kd, OUT = 0.0, 0.0, 0.0, 54.0
+
+
+# --------------------------------------------------------------------------- #
+#  Initialisation helpers
+# --------------------------------------------------------------------------- #
+
+def init_hardware():
+    """Initialise I²C bus, peripherals and OpenTherm driver."""
+    i2c = init_i2c()
+    mcp = init_mcp(i2c)
+    display = DisplayController(init_lcd(mcp))
+    led = init_rgb_led(mcp)
+    buttons = init_buttons(mcp)
+
+    ot_driver = OpenthermUARTDriver(10_000)
+    ot_driver.start_periodic_update()
+
+    return display, led, buttons, ot_driver
+
+
+def load_config(path: str = "config.txt"):
+    """Return `(config_manager, cfg_values_dict)` from *path*."""
+    cfg_mgr = ConfigManager(path)
+
+    def _bool(section, key, default=False):
+        return str(cfg_mgr.get_value(section, key, default)).lower() == "true"
+
+    cfg = {
+        "debug": cfg_mgr.get_value("DEVICE","DEBUG",1),
+        # Wi‑Fi
+        "ssid": cfg_mgr.get_value("WIFI", "SSID"),
+        "wifi_pass": cfg_mgr.get_value("WIFI", "PASS"),
+        # Homematic
+        "ccu_ip": cfg_mgr.get_value("CCU3", "IP", "0.0.0.0"),
+        "ccu_user": cfg_mgr.get_value("CCU3", "USER", ""),
+        "ccu_pass": cfg_mgr.get_value("CCU3", "PASS", ""),
+        "valve_type": cfg_mgr.get_value("CCU3", "VALVE_DEVTYPE", "HmIP-eTRV"),
+        # OpenTherm
+        "ot_max_heating_setpoint": float(cfg_mgr.get_value("OT", "MAX_HEATING_SETPOINT", 72.0)),
+        "ot_manual_heating_setpoint": float(cfg_mgr.get_value("OT", "MANUAL_HEATING_SETPOINT", 55.0)),
+        "ot_dhw_setpoint": float(cfg_mgr.get_value("OT", "DHW_SETPOINT", 50.0)),
+        "ot_manual_heating": _bool("OT", "MANUAL_HEATING"),
+        "ot_enable_controller": _bool("OT", "ENABLE_CONTROLLER"),
+        "ot_enable_heating": _bool("OT", "ENABLE_HEATING"),
+        "ot_enable_dhw": _bool("OT", "ENABLE_DHW"),
+        # MQTT
+        "mqtt_broker": cfg_mgr.get_value("MQTT", "BROKER"),
+        "mqtt_port": int(cfg_mgr.get_value("MQTT", "PORT", 1883)),
+        "mqtt_user": cfg_mgr.get_value("MQTT", "USER", ""),
+        "mqtt_pass": cfg_mgr.get_value("MQTT", "PASS", ""),
+        "mqtt_base_topic": cfg_mgr.get_value("MQTT", "BASE_TOPIC", "home/ot-controller"),
+    }
+
+    return cfg_mgr, cfg
+
+
+# --------------------------------------------------------------------------- #
+#  Fatal‑error handler
+# --------------------------------------------------------------------------- #
+
+def handle_fatal_error(err_type, display, led, msg, tb=None):
+    error_manager.log_fatal_error(err_type, msg, tb)
     try:
-        if display: display.show_message("FATAL ERROR", "REBOOTING..." if not DEVELOPMENT_MODE else "ERROR")
-        # Use direct_send_color as LED might not be updating anymore
-        if led: led.direct_send_color("red")
-    except Exception as e:
-        error_manager.log_error(f"Fatal error handling display: {e}")
+        if display:
+            display.show_message("FATAL ERROR", "REBOOTING..." if not DEVELOPMENT_MODE else "ERROR")
+        if led:
+            led.direct_send_color("red")
+    except Exception as disp_exc:  # noqa: BLE001
+        error_manager.log_error(f"Display fail in fatal handler: {disp_exc}")
+
     time.sleep(2)
-    if not DEVELOPMENT_MODE:
-        reset()
+    if DEVELOPMENT_MODE:
+        print(f"[DEV] FATAL {err_type}: {msg}\n{tb}")
+        while True:
+            time.sleep(1)
     else:
-        print(f"--- FATAL ERROR (Dev Mode) ---")
-        print(f"Type: {error_type}")
-        print(f"Message: {message}")
-        if traceback:
-            print("Traceback:", traceback)
-        print("--- Halting ---")
-        # Halt execution in dev mode
-        while True: time.sleep(1)
+        reset()
 
 
-async def wifi_update(wifi_service: WiFiManager):
-    """Asynchronous function to update WiFi connection status."""
+# --------------------------------------------------------------------------- #
+#  Asynchronous tasks
+# --------------------------------------------------------------------------- #
+
+async def wifi_task(wifi):
     while True:
         try:
-            wifi_service.update()
-        except Exception as e:
-            error_manager.log_error(f"Error in wifi_update: {e}")
-        await asyncio.sleep(5) # Check WiFi status every 5 seconds
+            wifi.update()
+        except Exception as e:  # noqa: BLE001
+            error_manager.log_error(f"WiFi: {e}")
+        await asyncio.sleep(5)
 
-# gui_update is no longer needed, GUIManager handles rendering via events/modes
 
-# input_update is no longer needed, GUIManager handles input via observer pattern
-
-async def led_update(led):
-    """Asynchronous function to update LED state."""
+async def led_task(led):
     while True:
         try:
             led.update()
-        except Exception as e:
-            error_manager.log_error(f"Error in led_update: {e}")
-        await asyncio.sleep_ms(100) # Update LED state relatively frequently
+        except Exception as e:  # noqa: BLE001
+            error_manager.log_error(f"LED: {e}")
+        await asyncio.sleep_ms(100)
 
-async def hm_data_update(homematic_service: HomematicDataService):
-    """Asynchronous function to update Homematic data."""
+
+async def homematic_task(hm):
     while True:
         try:
-             # update() now decides *when* to fetch based on internal timer and paused state
-            homematic_service.update()
-        except Exception as e:
-            error_manager.log_error(f"Error in hm_data_update: {e}")
-        await asyncio.sleep(5) # Check if fetch is needed every 5 seconds
+            hm.update()
+        except Exception as e:  # noqa: BLE001
+            error_manager.log_error(f"HM: {e}")
+        await asyncio.sleep(5)
 
-async def opentherm_update(ot_controller: OpenthermController):
-    """Asynchronous function to handle OpenTherm communication via the controller."""
-    print("Starting OpenTherm controller update task...")
-    # Driver handles periodic sending internally
-    # Controller handles reading via its update() method
 
+async def opentherm_task(ctl):
     while True:
         try:
-            # Call the controller's update method to read and process responses
-            await ot_controller.update()
-            
-            # Optional: Access controller state if needed after update
-            # last_type = ot_controller.last_response_type
-            # last_val = ot_controller.last_response_value
-            # if last_type and last_type != 'TIMEOUT':
-            #     print(f"[OT Task] Controller saw: {last_type}, {last_val}")
-
-            # Yield control
-            # The controller's update method has internal sleeps/timeouts
-            # We still need a sleep here to prevent this task from hogging CPU
-            await asyncio.sleep_ms(100) # Adjust sleep time as needed
-
-        except Exception as e:
-            error_manager.log_error(f"Error in opentherm_update (controller task): {e}")
-            await asyncio.sleep(5) # Wait longer after an error
+            await ctl.update()
+        except Exception as e:  # noqa: BLE001
+            error_manager.log_error(f"OT: {e}")
+            await asyncio.sleep(5)
+        await asyncio.sleep_ms(100)
 
 
-async def safe_task(coro, display, led):
-    """Wraps a coroutine to catch fatal errors."""
-    try:
-        await coro
-    except asyncio.CancelledError:
-        print("Task cancelled.") # Normal cancellation
-    except Exception as e:
-        import sys
-        # Use the global display/led references in case they aren't passed correctly
-        # or the error happens before they are fully initialized in the calling context.
-        handle_fatal_error("TaskError", _g_display, _g_led, str(e), sys.print_exception(e))
-
-
-async def printout_hm_data(homematic_service: HomematicDataService):
-    """Prints out the Homematic data periodically for debugging."""
+async def poll_buttons_task(hid):
     while True:
-        global ot_enable_controller, ot_enable_heating, ot_enable_dhw, ot_manual_heating, ot_manual_heating_setpoint
-        print(f"ot_enable_controller: {ot_enable_controller}")
-        print(f"ot_enable_heating: {ot_enable_heating}")
-        print(f"ot_enable_dhw: {ot_enable_dhw}")
-        print(f"ot_manual_heating: {ot_manual_heating}")
-        print(f"ot_manual_heating_setpoint: {ot_manual_heating_setpoint}")
-        # print(f"ot_controller.get_current_heating_setpoint(): {ot_controller.get_current_heating_setpoint()}")
-        if homematic_service.is_ccu_connected():
-            print("--- HM Data ---")
-            print(f"  Total devices: {homematic_service.total_devices}")
-            print(f"  Valve devices: {homematic_service.valve_devices}")
-            print(f"  Reporting valves: {homematic_service.reporting_valves}")
-            print(f"  Average valve: {homematic_service.avg_valve:.1f}%")
-            print(f"  Max valve: {homematic_service.max_valve:.1f}%")
-            print("---------------")
-        else:
-            print("--- HM Data: CCU Not Connected ---")
-        await asyncio.sleep(10)  # Print status less frequently
+        hid.get_event()
+        await asyncio.sleep_ms(20)
 
 
-# --- NEW Task to Poll Buttons ---
-async def poll_buttons(hid_controller: HIDController):
-    """Periodically polls the HIDController to check for button events."""
-    print("Starting button polling task...")
-    while True:
-        hid_controller.get_event() # This checks hardware and notifies observers if needed
-        await asyncio.sleep_ms(20) # Poll reasonably fast, but yield control
-
-
-async def monitor_error_rate_limiter(homematic_service: HomematicDataService, wifi_service: WiFiManager, led):
-    """Monitors the error rate limiter and performs a quick reset if triggered."""
+async def error_rate_limiter_task(hm, wifi, led):
+    """Watch the `ErrorManager` limiter flag and perform a quick reset cycle."""
     while True:
         if error_manager.error_rate_limiter_reached:
-            error_manager.log_warning("Error rate limiter TRIGGERED! Performing reset cycle.") # Log trigger
-
-            # Pause/Disconnect services
+            error_manager.log_warning("Error‑rate limiter TRIGGERED – running cooldown cycle")
             try:
-                error_manager.log_info("Pausing Homematic service...")
-                homematic_service.set_paused(True)
-                error_manager.log_info("Disconnecting WiFi service...")
-                wifi_service.disconnect()
-            except Exception as e:
-                error_manager.log_error(f"Error pausing/disconnecting services during rate limit reset: {e}")
-
-            # Set LED to solid red briefly (visual cue)
-            try:
-                error_manager.log_info("Setting LED to solid red...")
+                hm.set_paused(True)
+                wifi.disconnect()
                 led.set_color("red", blink=False)
-            except Exception as e:
-                error_manager.log_error(f"Error setting LED for rate limit reset: {e}")
+            except Exception as e:  # noqa: BLE001
+                error_manager.log_error(f"Limiter prep: {e}")
 
-            # Immediately reset the limiter
-            error_manager.log_info("Resetting error rate limiter flag...")
             error_manager.reset_error_rate_limiter()
 
-            # Immediately resume services
-            error_manager.log_info("Resuming services after rate limit reset...")
-            homematic_service.set_paused(False)
-            wifi_service.update()  # Trigger WiFi reconnection attempt
-
-            # LED will return to normal status based on main_tasks_loop on next cycle
-
-        # Check the limiter status periodically (e.g., every second)
+            try:
+                hm.set_paused(False)
+                wifi.update()
+            except Exception as e:  # noqa: BLE001
+                error_manager.log_error(f"Limiter resume: {e}")
         await asyncio.sleep(1)
 
 
-async def main_tasks_loop(homematic_service: HomematicDataService, ot_controller: OpenthermController, wifi_service: WiFiManager, led: RGBLED):
-    """Main loop managing LED status based on service states."""
-    # Initial LED state
-    led.set_color("red", blink=False) # Start red until connections are up
-    global ot_enable_controller, ot_enable_heating, ot_enable_dhw, ot_manual_heating, ot_manual_heating_setpoint
+async def main_status_task(hm, ot_ctl, wifi, led):
     while True:
-        # Update LED status based on Wifi and CCU connection
-        if wifi_service.is_connected():
-            homematic_service.set_paused(False) # Allow HM fetching if WiFi is up
-            if homematic_service.is_ccu_connected():
-                # WiFi OK, CCU OK -> Slow Green Blink
-                led.set_color("green", blink=True, duration_on=50, duration_off=2000)
-            else:
-                # WiFi OK, CCU Not OK -> Magenta Blink (Error state)
-                led.set_color("magenta", blink=True, duration_on=500, duration_off=500)
+        if wifi.is_connected():
+            hm.set_paused(False)
+            led.set_color("green" if hm.is_ccu_connected() else "magenta",
+                           blink=True, duration_on=50, duration_off=2000)
         else:
-            # WiFi Not OK -> Red Blink
-            homematic_service.set_paused(True) # Pause HM fetching if WiFi is down
+            hm.set_paused(True)
             led.set_color("red", blink=True, duration_on=1000, duration_off=1000)
-        if ot_enable_controller:
-            ot_controller.enable_controller()
-            if ot_manual_heating:
-                if ot_manual_heating_setpoint != ot_controller.get_current_heating_setpoint():
-                    ot_controller.set_heating_setpoint(ot_manual_heating_setpoint) #todo move this to the controller class
-                    print(f"Set heating setpoint to {ot_manual_heating_setpoint}")
-                    print(f"fix me! this is a hack! we should not be setting the setpoint here, but in the controller class")
-            if ot_enable_dhw:
-                if ot_dhw_setpoint != ot_controller.get_current_dhw_setpoint():
-                    ot_controller.set_dhw_setpoint(ot_dhw_setpoint) #todo move this to the controller class
-                    print(f"Set dhw setpoint to {ot_dhw_setpoint}")
-                    print(f"fix me! this is a hack! we should not be setting the setpoint here, but in the controller class")  
-            if not ot_enable_heating:
-                ot_controller.disable_heating()
-            else:
-                ot_controller.enable_heating()
-            if not ot_enable_dhw:
-                ot_controller.disable_dhw() 
-            else:
-                ot_controller.enable_dhw()
-        else:
-            ot_controller.disable_controller()
-          
-        await asyncio.sleep(1) # Check status every second
-# Use global display/led for handle_fatal_error access if tasks fail early
-_g_display = None
-_g_led = None
 
-# --- Monitoring Page Render Functions ---
-# def render_monitor_page_1(display): ...
-# def render_monitor_page_2(display): ...
-# def render_monitor_page_3(display): ...
+        # Controller state is now self-managed, no need to update from STATE
+        await asyncio.sleep(1)
 
-# PID Status Todo: setup these
-Kp = 0.0
-Ki = 0.0
-Kd = 0.0
-OUT = 54.0
 
-# --- End Monitoring Pages ---
+# --------------------------------------------------------------------------- #
+#  Menu construction
+# --------------------------------------------------------------------------- #
 
-# ----------------------------
-def _initialize_hardware()->tuple[DisplayController, RGBLED, HIDController, OpenthermUARTDriver]:
-    i2c = init_i2c()
-    mcp = init_mcp(i2c)
-    lcd_hw = init_lcd(mcp) 
-    led = init_rgb_led(mcp)
-    buttons = init_buttons(mcp) 
-    display = DisplayController(lcd_hw) 
-    ot_driver = OpenthermUARTDriver(10000) # <<<--- RE-ADD INITIALIZATION HERE
-    ot_driver.start_periodic_update()
-    return display, led, buttons, ot_driver
-
-def load_all_config_values(config):  #refactor this somehow, it isn't a good idea to have global variables
-        global ssid, wifi_pass, ccu_ip, ccu_user, ccu_pass, valve_type, ot_max_heating_setpoint, ot_manual_heating_setpoint, ot_dhw_setpoint, ot_manual_heating, ot_enable_controller, ot_enable_heating, ot_enable_dhw, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass, mqtt_base_topic  
-        ssid       = config.get_value("WIFI", "SSID")
-        wifi_pass  = config.get_value("WIFI", "PASS")
-        ccu_ip     = config.get_value("CCU3", "IP", "0.0.0.0") # Default IP
-        ccu_user   = config.get_value("CCU3", "USER", "")
-        ccu_pass   = config.get_value("CCU3", "PASS", "")
-        valve_type = config.get_value("CCU3", "VALVE_DEVTYPE", "HmIP-eTRV") # Default valve type
-        # Ensure OT values are floats
-        ot_max_heating_setpoint = float(config.get_value("OT", "MAX_HEATING_SETPOINT", 72.0))
-        ot_manual_heating_setpoint = float(config.get_value("OT", "MANUAL_HEATING_SETPOINT", 55.0))
-        ot_dhw_setpoint = float(config.get_value("OT", "DHW_SETPOINT", 50.0))
-        # Ensure boolean value is correctly parsed
-        ot_manual_heating = str(config.get_value("OT", "MANUAL_HEATING", False)).lower() == 'true'
-        ot_enable_controller = str(config.get_value("OT", "ENABLE_CONTROLLER", False)).lower() == 'true'
-        ot_enable_heating = str(config.get_value("OT", "ENABLE_HEATING", False)).lower() == 'true'
-        ot_enable_dhw = str(config.get_value("OT", "ENABLE_DHW", False)).lower() == 'true'
-
+def build_menu(cfg_mgr, cfg, wifi, hm, gui_mgr, ot_ctl):
+    def save(sec, key, val):
+        cfg_mgr.set_value(sec, key, val)
+        cfg_mgr.save_config()
+        cfg.update(load_config(cfg_mgr.filename)[1])
         
-        mqtt_broker = config.get_value("MQTT", "BROKER")
-        mqtt_port = int(config.get_value("MQTT", "PORT"))  # Convert port to integer
-        mqtt_user = config.get_value("MQTT", "USER")
-        mqtt_pass = config.get_value("MQTT", "PASS")
-        mqtt_base_topic = config.get_value("MQTT", "BASE_TOPIC", "home/ot-controller")
-
-def main():
-    global _g_display, _g_led
-    # Remove global service variables
-    # global _g_wifi_service, _g_homematic_service
-    # set hostname to unique hardware name but truncated to 14 characters
-    hostname = unique_hardware_name()[:15] # truncated to 15 characters, hostname compatibility
-    mqtt_client_id = unique_hardware_name()[:23] # truncated to 23 characters, MQTT spec    
-
-    # 1. Initialize Hardware (using functions from hardware_config.py)
-    try:
-
-        display, led, buttons, ot_driver = _initialize_hardware()
-        _g_display = display # Store globally for error handler
-        _g_led = led       # Store globally for error handler
-
-        # Load custom characters if defined in hardware_config
-        if 'CUSTOM_CHARS' in globals():
-             display.load_custom_chars(CUSTOM_CHARS)
-
-        display.show_message("System Booting", "Please wait...")
-        if not DEVELOPMENT_MODE: 
-            error_manager.log_error("Hardware reset detected.")
-        led.direct_send_color("red") # Indicate booting
-        print("Hardware Initialized.")
-
-    except Exception as e:
-        # Handle early hardware init errors (display/LED might not be available)
-        error_message = f"FATAL: Hardware Init Failed: {e}"
-        print(error_message)
-        error_manager.log_fatal_error("HardwareInit", error_message)
-        import sys
-        # Use print_exception directly if available (MicroPython specific)
-        try:
-            sys.print_exception(e)
-            error_manager.log_fatal_error("HardwareInit", "Traceback logged via print_exception")
-        except AttributeError:
-            # Fallback if print_exception doesn't exist or fails
-            print("Could not print traceback.")
-        # Attempt to use LED if initialized
-        if '_g_led' in globals() and _g_led: _g_led.direct_send_color("red")
-        # Can't use full error handler yet
-        while True: time.sleep(1) # Halt
-
-    # 2. Initialize Configuration
-    try:
-        config = ConfigManager("config.txt")
-        load_all_config_values(config)
-
-        # test_int   = int(config.get_value("TEST", "INT", 0))
-        # test_float = float(config.get_value("TEST", "FLOAT", 0.0))
-        # test_bool  = config.get_value("TEST", "BOOL", "False").lower() == 'true'
-
-        print("Configuration Loaded.")
-
-    except Exception as e:
-        handle_fatal_error("ConfigError", display, led, str(e))
-
-    # 3. Initialize MQTT
-    mqtt_service = MQTTClientService(
-        client_id=mqtt_client_id,
-        server=mqtt_broker,
-        port=mqtt_port,
-        user=mqtt_user,
-        password=mqtt_pass,
-        keepalive=60,
-        error_callback=lambda msg: print(f"MQTT CB Error: {msg}") # Simple print callback
-    )
-
-    # Register listeners and publishers (Synchronous)
-    mqtt_service.add_listener(f"{mqtt_base_topic}/command", value_type='str', qos=1)
-    mqtt_service.add_listener(f"{mqtt_base_topic}/config/set", value_type='json', qos=0)
-    mqtt_service.add_publisher(f"{mqtt_base_topic}/status", value_type='str', initial_value='booting', qos=1, retain=True)
-    mqtt_service.add_publisher(f"{mqtt_base_topic}/counter", value_type='int', qos=0)
-    mqtt_service.add_publisher(f"{mqtt_base_topic}/config/current", value_type='json', qos=1, retain=True)
-    mqtt_service.set(f"{mqtt_base_topic}/status", "online")
-    mqtt_service.set(f"{mqtt_base_topic}/config/current", {"mode": "test", "interval": 30})
-    # 3. Build the Menu Structure
-    def save_config_callback(section, key, value):
-        config.set_value(section, key, value)
-        config.save_config() # Save immediately on change
-        load_all_config_values(config) #reload all config values
-
+        # Update controller state when OT settings change
+        if sec == "OT":
+            if key == "ENABLE_CONTROLLER":
+                ot_ctl.controller_enabled = val
+            elif key == "ENABLE_HEATING":
+                ot_ctl.heating_enabled = val
+            elif key == "ENABLE_DHW":
+                ot_ctl.dhw_enabled = val
+            elif key == "MANUAL_HEATING":
+                ot_ctl.manual_heating = val
+            elif key == "MANUAL_HEATING_SETPOINT":
+                ot_ctl.manual_heating_setpoint = val
+            elif key == "DHW_SETPOINT":
+                ot_ctl.dhw_setpoint = val
+            elif key == "MAX_HEATING_SETPOINT":
+                ot_ctl.ot_max_heating_setpoint = val
 
     def save_and_reboot():
-        display.show_message("Action", "Saving & Reboot")
-        config.save_config()
+        gui_mgr.display.show_message("Action", "Saving & Reboot")
+        cfg_mgr.save_config()
         time.sleep(1)
         reset()
 
+    items = [
+        Menu("Network", [
+            TextField("WiFi SSID", cfg["ssid"], lambda v: save("WIFI", "SSID", v)),
+            TextField("WiFi Pass", cfg["wifi_pass"], lambda v: save("WIFI", "PASS", v)),
+        ]),
+        Menu("Homematic", [
+            IPAddressField("CCU3 IP", cfg["ccu_ip"], lambda v: save("CCU3", "IP", v)),
+            TextField("CCU3 User", cfg["ccu_user"], lambda v: save("CCU3", "USER", v)),
+            TextField("CCU3 Pass", cfg["ccu_pass"], lambda v: save("CCU3", "PASS", v)),
+            TextField("Valve Type", cfg["valve_type"], lambda v: save("CCU3", "VALVE_DEVTYPE", v)),
+            Action("Rescan", hm.force_rescan),
+        ]),
+        Menu("OpenTherm", [
+            FloatField("Max Heating SP", ot_ctl.ot_max_heating_setpoint, lambda v: save("OT", "MAX_HEATING_SETPOINT", v)),
+            FloatField("Manual Heating SP", ot_ctl.manual_heating_setpoint, lambda v: save("OT", "MANUAL_HEATING_SETPOINT", v)),
+            FloatField("Manual DHW SP", ot_ctl.dhw_setpoint, lambda v: save("OT", "DHW_SETPOINT", v)),
+            BoolField("Manual Heating", ot_ctl.manual_heating, lambda v: save("OT", "MANUAL_HEATING", v)),
+            BoolField("Takeover Control", ot_ctl.controller_enabled, lambda v: save("OT", "ENABLE_CONTROLLER", v)),
+            BoolField("Enable Heating", ot_ctl.heating_enabled, lambda v: save("OT", "ENABLE_HEATING", v)),
+            BoolField("Enable DHW", ot_ctl.dhw_enabled, lambda v: save("OT", "ENABLE_DHW", v)),
+        ]),
+        Menu("Device", [
+            Action("View Log", lambda: gui_mgr.switch_mode("logview")),
+            Action("Reset Error limiter", error_manager.reset_error_rate_limiter),
+            Action("Reboot Device", reset),
+            Action("Save & Reboot", save_and_reboot),
+            Action("Factory defaults", lambda: factory_reset(gui_mgr.display, gui_mgr.led, cfg_mgr, hm)),
+        ]),
+    ]
+
+    if DEVELOPMENT_MODE:
+        items.append(Menu("Debug", [
+            Action("Force wifi disconnect", wifi.disconnect),
+            Action("Fake Error", lambda: error_manager.log_error("Fake Error")),
+        ]))
+
+    return Menu("Main Menu", items)
+
+
+# --------------------------------------------------------------------------- #
+#  Background task registration
+# --------------------------------------------------------------------------- #
+
+def schedule_tasks(loop, *, wifi, hm, led, ot_ctl, hid):
+    for coro in (
+        wifi_task(wifi), led_task(led), homematic_task(hm), opentherm_task(ot_ctl),
+        poll_buttons_task(hid), main_status_task(hm, ot_ctl, wifi, led),
+        error_rate_limiter_task(hm, wifi, led),
+    ):
+        loop.create_task(coro)
+
+
+# --------------------------------------------------------------------------- #
+#  Main
+# --------------------------------------------------------------------------- #
+
+def main():  # noqa: C901
+    # -------------------------------- Hardware & services ------------------- #
     try:
-        # Build the list of menu items conditionally
-        menu_items = [
-            Menu("Network", [
-                TextField("WiFi SSID", ssid, lambda v: save_config_callback("WIFI", "SSID", v)),
-                TextField("WiFi Pass", wifi_pass, lambda v: save_config_callback("WIFI", "PASS", v)),
-            ]),
-            Menu("Homematic", [
-                IPAddressField("CCU3 IP", ccu_ip, lambda v: save_config_callback("CCU3", "IP", v)),
-                TextField("CCU3 User", ccu_user, lambda v: save_config_callback("CCU3", "USER", v)),
-                TextField("CCU3 Pass", ccu_pass, lambda v: save_config_callback("CCU3", "PASS", v)),
-                TextField("Valve Type", valve_type, lambda v: save_config_callback("CCU3", "VALVE_DEVTYPE", v)),
-                Action("Rescan", lambda: homematic_service.force_rescan()),
-            ]),
-            Menu("OpenTherm", [
-                FloatField("Max Heating SP", ot_max_heating_setpoint, lambda v: save_config_callback("OT", "MAX_HEATING_SETPOINT", v)),
-                FloatField("Manual Heating SP", ot_manual_heating_setpoint, lambda v: save_config_callback("OT", "MANUAL_HEATING_SETPOINT", v)),
-                FloatField("Manual DHW SP", ot_dhw_setpoint, lambda v: save_config_callback("OT", "DHW_SETPOINT", v)),
-                BoolField("Manual Heating", ot_manual_heating, lambda v: save_config_callback("OT", "MANUAL_HEATING", v)),
-                BoolField("Takeover Control", ot_enable_controller, lambda v: save_config_callback("OT", "ENABLE_CONTROLLER", v)),
-                BoolField("Enable Heating", ot_enable_heating, lambda v: save_config_callback("OT", "ENABLE_HEATING", v)),
-                BoolField("Enable DHW", ot_enable_dhw, lambda v: save_config_callback("OT", "ENABLE_DHW", v)),  
+        display, led, buttons, ot_driver = init_hardware()
+    except Exception as e:  # noqa: BLE001
+        handle_fatal_error("Hardware", None, None, str(e))
+        return
 
-            ]),
-            Menu("Device", [
-                Action("View Log", lambda: gui_manager.switch_mode("logview")),
-                Action("Reset Error limiter", lambda: error_manager.reset_error_rate_limiter()),
-                Action("Reboot Device", reset),
-                Action("Save & Reboot", save_and_reboot),
-                Action("Factory defaults", lambda: factory_reset(display, led, config, homematic_service)),
-            ]),
-        ]
-
-        # Conditionally add the Debug menu
-        if DEVELOPMENT_MODE:
-            menu_items.append(
-                Menu("Debug", [
-                   Action("Corrupt session_id", lambda: corrupt_hm_session()),
-                   Action("Force wifi disconnect", lambda: wifi_service.disconnect()),
-                   Action("Fake Error", lambda: error_manager.log_error("Fake Error")),
-                ])
-            )
-
-        # Add non-menu items (if any were planned here - currently none in your structure)
-        # Example: menu_items.append(TextField(...))
-
-        # Create the root menu with the constructed list
-        root_menu = Menu("Main Menu", menu_items)
-
-        print("Menu Structure Built.")
-    except Exception as e:
-         handle_fatal_error("MenuError", display, led, str(e))
-
-    # 4. Initialize Services (BEFORE Monitor Mode needs them)
     try:
-        ccu_url = f"http://{ccu_ip}/api/homematic.cgi" # Use configured IP
-        wifi_service = WiFiManager(ssid, wifi_pass, hostname)
-        homematic_service = HomematicDataService(ccu_url, ccu_user, ccu_pass, valve_type)
-        # Remove global assignments
-        # _g_wifi_service = wifi_service
-        # _g_homematic_service = homematic_service
-
-        print("Services Initialized.")
-    except Exception as e:
-        handle_fatal_error("ServiceInitError", display, led, str(e))
-
-    # --- Helper function for Debug Menu ---
-    def corrupt_hm_session():
-        """Intentionally corrupts the stored Homematic session ID for testing."""
-        if homematic_service and hasattr(homematic_service, '_hm'):
-            error_manager.log_info("DEBUG ACTION: Corrupting Homematic session ID.")
-            homematic_service._hm._session_id = "invalid_session_for_debug"
-            # Optional: Force update status to reflect potential disconnect
-            # asyncio.create_task(homematic_service._hm._update_connection_status(None, "Manually corrupted session"))
-        else:
-            error_manager.log_warning("DEBUG ACTION: Could not corrupt session (homematic_service or _hm not found).")
-    # --- End Helper --- 
-
-    # 5. Initialize GUI Manager and Modes
-    try:
-        # GUIManager init automatically registers itself as observer with buttons device
-        gui_manager = GUIManager(display, buttons)
-        ot_controller = OpenthermController(ot_driver, ot_max_heating_setpoint)
-        _g_ot_controller = ot_controller # Store globally for error handler
-        # Create mode instances
-        nav_mode = NavigationMode(root_menu) # Pass the root menu
-        edit_mode = EditingMode()
-        # Instantiate MonitoringMode now that services exist
-        # Pass refresh interval (e.g., 1000ms)
-        monitor_mode = MonitoringMode(refresh_interval_ms=250)
-
-        # --- Add monitor pages using SimplePage ---
-        # Page 1: Network Status
-        monitor_mode.add_page(Page(
-            # Line 1: Network IP or Status
-            lambda: f"Net: {wifi_service.get_ip() or wifi_service.get_status() or 'Unknown'}",
-            # Line 2: CCU Status
-            lambda: f"CCU: {
-                'Connected' if homematic_service.is_ccu_connected() else 
-                ('Checking...' if homematic_service.is_ccu_connected() is None else 'Offline')
-            }"
-        ))
-
-        # Page 2: Valve Status
-        monitor_mode.add_page(Page(
-            # Line 1: Average Valve or Status
-            lambda: (
-                f"Avg: {homematic_service.avg_valve:.1f}%" if homematic_service.is_ccu_connected() 
-                else ("Valve Status" if homematic_service.is_ccu_connected() is None else "Valve Status")
-            ),
-            # Line 2: Max Valve/Count or Status
-            lambda: (
-                f"Max: {homematic_service.max_valve:.1f}% {homematic_service.valve_devices}/{homematic_service.reporting_valves}" if homematic_service.is_ccu_connected() 
-                else ("Checking CCU..." if homematic_service.is_ccu_connected() is None else "CCU Offline")
-            )
-        ))
-
-        # Page 3: PID Status (using global Kp, Ki etc for now)
-        monitor_mode.add_page(Page(
-            lambda: f"Kp: {Kp:.2f} Ki: {Ki:.2f}",
-            lambda: f"Kd: {Kd:.2f} OUT: {OUT:.2f}"
-        ))
-        monitor_mode.add_page(Page(
-            lambda: f"DHW SP: {ot_dhw_setpoint:.1f}",
-            lambda: f"Manual Heat: {ot_manual_heating}"
-        ))
-        monitor_mode.add_page(Page(
-            lambda: f"Heating SP: {_g_ot_controller.get_current_heating_setpoint():.1f}",
-            lambda: f"DHW SP: {_g_ot_controller.get_current_dhw_setpoint():.1f}"
-        ))
-        monitor_mode.add_page(Page(
-            # Line 1: Room Name with Max Valve
-            lambda: f"Room: {homematic_service.max_valve_room_name}",
-            # Line 2: Max Valve %
-            lambda: f"Max Valve: {homematic_service.max_valve:.1f}%" 
-                     if homematic_service.is_ccu_connected() else "(CCU Offline)"
-        ))
-
-        # --- End adding pages ---
-
-        # Register modes
-        gui_manager.add_mode("navigation", nav_mode)
-        gui_manager.add_mode("editing", edit_mode)
-        gui_manager.add_mode("monitoring", monitor_mode)
-
-        print("GUI Manager and Modes Initialized.")
-    except Exception as e:
-        handle_fatal_error("GUIInitError", display, led, str(e))
-
-    # --- NEW ---
-
-    async def log_view_task(log_view, gui_manager):
-        """Task to manage the LogView mode."""
-        while True:
-            if gui_manager.current_mode_name == "logview":
-                gui_manager.render()
-            await asyncio.sleep(0.1)  # Adjust refresh rate as needed
-
-
-
-    # Initialize LogView mode
-    try:
-        log_view = LogView("log.txt", display.rows, display.cols)
-        gui_manager.add_mode("logview", log_view)
-        print("LogView mode initialized.")
-    except Exception as e:
-        handle_fatal_error("LogViewInitError", display, led, str(e))
-
-    # --- END NEW ---
-
-    # 6. Start System
-    try:
-        print("Starting Event Loop...")
-        # Set initial GUI mode (default to monitoring if available)
-        initial_mode = "monitoring" if "monitoring" in gui_manager.modes else "navigation"
-        gui_manager.switch_mode(initial_mode)
-
-        # Start background tasks
-        loop = asyncio.get_event_loop()
-        loop.create_task(safe_task(poll_buttons(buttons), display, led))
-        loop.create_task(safe_task(hm_data_update(homematic_service), display, led))
-        loop.create_task(safe_task(wifi_update(wifi_service), display, led))
-        loop.create_task(safe_task(led_update(led), display, led))
-        loop.create_task(safe_task(monitor_error_rate_limiter(homematic_service, wifi_service, led), display, led))
-        loop.create_task(safe_task(log_view_task(log_view, gui_manager), display, led))
-        if DEVELOPMENT_MODE:
-            loop.create_task(safe_task(printout_hm_data(homematic_service), display, led))
-        loop.create_task(safe_task(opentherm_update(ot_controller), display, led)) # <<<--- Pass controller
-        loop.create_task(safe_task(main_tasks_loop(homematic_service, ot_controller, wifi_service, led), display, led))
-        loop.create_task(safe_task(mqtt_service.update(), display, led))
+        cfg_mgr, cfg = load_config()
+        print(f"DEBUG: {DEBUG}")
+        wifi = WiFiManager(cfg["ssid"], cfg["wifi_pass"], unique_hardware_name()[:15])
+        hm = HomematicDataService(
+            f"http://{cfg['ccu_ip']}/api/homematic.cgi",
+            cfg["ccu_user"], cfg["ccu_pass"], cfg["valve_type"],
+        )
+        ot_ctl = OpenthermController(ot_driver, cfg["ot_max_heating_setpoint"])
         
-        print("System Running.")
-        loop.run_forever()  # Start the asyncio scheduler
+        # Set initial controller state from config
+        ot_ctl.controller_enabled = cfg["ot_enable_controller"]
+        ot_ctl.manual_heating = cfg["ot_manual_heating"]
+        ot_ctl.manual_heating_setpoint = cfg["ot_manual_heating_setpoint"]
+        ot_ctl.heating_enabled = cfg["ot_enable_heating"]
+        ot_ctl.dhw_enabled = cfg["ot_enable_dhw"]
+        ot_ctl.dhw_setpoint = cfg["ot_dhw_setpoint"]
 
+        
+        base = cfg["mqtt_base_topic"]
+
+    except Exception as e:  # noqa: BLE001
+        handle_fatal_error("ServiceInit", display, led, str(e))
+        return
+
+    # -------------------------------- GUI ----------------------------------- #
+    try:
+        gui = GUIManager(display, buttons)
+        # Build menu with a reference to the OpenTherm controller
+        root_menu = build_menu(cfg_mgr, cfg, wifi, hm, gui, ot_ctl)
+        gui.add_mode("navigation", NavigationMode(root_menu))
+        gui.add_mode("editing", EditingMode())
+
+        mon = MonitoringMode(refresh_interval_ms=250)
+        # Page 1: Network / CCU status (kept from clean version)
+        mon.add_page(Page(lambda: f"Net: {wifi.get_ip() or 'NA'}",
+                           lambda: f"CCU: {hm.is_ccu_connected()}"))
+        # Page 2: Valve status
+        mon.add_page(Page(lambda: (f"Avg: {hm.avg_valve:.1f}%" if hm.is_ccu_connected() else "Valve Status"),
+                           lambda: (f"Max: {hm.max_valve:.1f}% {hm.valve_devices}/{hm.reporting_valves}" if hm.is_ccu_connected() else "CCU Offline")))
+        # Page 3: PID constants
+        mon.add_page(Page(lambda: f"Kp: {Kp:.2f} Ki: {Ki:.2f}",
+                           lambda: f"Kd: {Kd:.2f} OUT: {OUT:.2f}"))
+        # Page 4: Manual settings
+        mon.add_page(Page(lambda: f"DHW SP: {ot_ctl.dhw_setpoint:.1f}",
+                           lambda: f"Manual Heat: {ot_ctl.manual_heating}"))
+        # Page 5: Current OT set‑points
+        mon.add_page(Page(lambda: f"Heating SP: {ot_ctl.get_current_heating_setpoint():.1f}",
+                           lambda: f"DHW SP: {ot_ctl.get_current_dhw_setpoint():.1f}"))
+        # Page 6: OT controller status
+        mon.add_page(Page(lambda: f"OT State: {'On' if ot_ctl.controller_enabled else 'Off'}",
+                           lambda: f"Heat: {'On' if ot_ctl.heating_enabled else 'Off'} DHW: {'On' if ot_ctl.dhw_enabled else 'Off'}"))
+        # Page 7: Room with max valve opening
+        mon.add_page(Page(lambda: f"Room: {hm.max_valve_room_name}",
+                           lambda: f"Max Valve: {hm.max_valve:.1f}%" if hm.is_ccu_connected() else "(CCU Offline)"))
+
+        gui.add_mode("monitoring", mon)
+
+        log_view = LogView("log.txt", display.rows, display.cols)
+        gui.add_mode("logview", log_view)
+
+        gui.switch_mode("monitoring")
+
+    except Exception as e:  # noqa: BLE001
+            handle_fatal_error("GUIInit", display, led, str(e))
+            return
+
+    loop = asyncio.get_event_loop()
+    schedule_tasks(loop, wifi=wifi, hm=hm, led=led, ot_ctl=ot_ctl, hid=buttons)
+
+    try:
+        loop.run_forever()
     except KeyboardInterrupt:
-        print("Keyboard Interrupt.")
-    except Exception as e:
-        handle_fatal_error("MainLoopError", display, led, str(e))
+        print("KeyboardInterrupt  shutdown")
     finally:
-        # Cleanup? (e.g., turn off display/led)
-        if display: display.clear()
-        if 'ot_driver' in locals() and ot_driver: ot_driver.close() # <<<--- ADD Cleanup
-        if led: led.direct_send_color("black")
-        print("System Shutdown.")
-        asyncio.new_event_loop()  # Reset asyncio state (good practice in MicroPython)
+        display.clear()
+        ot_driver.close()
+        led.direct_send_color("red")
+        asyncio.new_event_loop()
+
 
 if __name__ == "__main__":
     main()

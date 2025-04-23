@@ -11,13 +11,8 @@ from manager_error import ErrorManager # Import the class
 
 # Instantiate to access the global error manager instance
 error_manager = ErrorManager()
+DEBUG = error_manager.get_debuglevel()
 
-# --- Import DEBUG flag ---
-# Use a default value if flags.py or DEBUG is not found
-try:
-    from flags import DEBUG
-except ImportError:
-    DEBUG = 0
 # --- End Import ---
 
 def pad_string(text, length):

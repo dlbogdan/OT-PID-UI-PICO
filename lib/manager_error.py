@@ -8,14 +8,18 @@ class ErrorManager:
     ERROR_FILE = "lasterror.json"
     LOG_FILE = "log.txt"
 
-    def __init__(self):
+    def __init__(self, debug_level=0):
         self._last_error = None
+        self._debug_level = debug_level
         self._error_history = []  # Stores the last 3 errors and warnings
         self._error_timestamps = []  # Tracks timestamps of recent errors for rate limiting
         self._max_error_history = 10
         self._error_rate_limit = 3
         self.error_rate_limiter_reached = False
 
+    def get_debuglevel(self):
+        return self._debug_level
+    
     def log_fatal_error(self, error_type, message, traceback=None):
         """Logs a fatal error to flash. Only writes if different from last error."""
         new_error = {

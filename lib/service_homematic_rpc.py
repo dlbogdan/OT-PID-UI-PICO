@@ -3,11 +3,11 @@ import asyncio
 from service_async_http import JsonRpcClient, NetworkError
 import time
 import ujson
-from flags import DEBUG
+
 from manager_error import ErrorManager
 
 error_manager = ErrorManager()
-
+DEBUG = error_manager.get_debuglevel()
 # --- Homematic CCU3 RPC Client ---
 class HomematicRPCClient:
     """ASYNC Client for interacting with a Homematic CCU3 via JSON-RPC."""

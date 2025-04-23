@@ -8,10 +8,11 @@ import gc
 import errno
 # import _thread # No longer needed for get_ident here
 import asyncio # <<< ADDSYNCIO IMPORT
-from flags import *
+
 from manager_error import ErrorManager
 
 error_manager = ErrorManager()
+DEBUG = error_manager.get_debuglevel()
 
 try:
     import ssl as tls # Standard library name

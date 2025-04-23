@@ -8,6 +8,9 @@ import uasyncio as asyncio
 from manager_error import ErrorManager
 from manager_wifi import WiFiManager
 
+error_manager = ErrorManager()
+DEBUG = error_manager.get_debuglevel()
+
 # Constants
 AUTH_USERNAME = "admin"
 AUTH_PASSWORD = "otapico"
