@@ -1,9 +1,8 @@
 #driver_HD44780.py - Driver for HD44780 LCD using any Pin-compatible interface
 import utime
 from drivers.driver_lcd import LCD
-from managers.manager_logger import Logger
+from initialization import logger
 
-logger = Logger()
 
 # --- CGRAM/DDRAM Constants ---
 LCD_SETCGRAMADDR = 0x40

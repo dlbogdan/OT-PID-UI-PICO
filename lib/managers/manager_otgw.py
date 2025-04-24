@@ -1,7 +1,8 @@
 import uasyncio
 import time
 from controllers.controller_otgw import OpenThermController, OTGW_RESPONSE_OK, OTGW_RESPONSE_TIMEOUT, OTGW_RESPONSE_UNKNOWN
-from managers.manager_logger import Logger
+from initialization import logger
+
 
 # Status constants for command tracking
 CMD_STATUS_IDLE = "idle"
@@ -11,7 +12,7 @@ CMD_STATUS_TIMEOUT = "timeout"
 CMD_STATUS_ERROR = "error"
 CMD_STATUS_VALIDATION_ERROR = "validation_error"
 
-logger = Logger()
+
 
 class OpenThermManager:
     """

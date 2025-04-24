@@ -7,10 +7,8 @@ from machine import I2C, Pin
 import utime as time  # Use utime for MicroPython compatibility
 from controllers.controller_HID import ButtonObserver, ButtonEventType, ButtonName, ButtonEvent
 import uasyncio as asyncio # Add asyncio import
-from managers.manager_logger import Logger # Import the class
+from initialization import logger
 
-# Instantiate to access the global error manager instance
-error_manager = Logger()
 
 # --- End Import ---
 
@@ -101,14 +99,14 @@ class FloatEditor(Editor):
             return
 
         # --- Debugging Float Edit ---
-        error_manager.debug(f"FloatEditor.handle - Start - editing_value='{self.field.editing_value}'")
+        logger.debug(f"FloatEditor.handle - Start - editing_value='{self.field.editing_value}'")
         # --- End Debugging ---
 
         try:
             val = float(self.field.editing_value)
         except ValueError as e:
             # --- Debugging Float Edit ---
-            error_manager.error(f"FloatEditor.handle - Failed to parse float: '{self.field.editing_value}'. Error: {e}")
+            logger.error(f"FloatEditor.handle - Failed to parse float: '{self.field.editing_value}'. Error: {e}")
             val = 0.0 # Default if parsing fails
 
         if event.button == ButtonName.UP:
@@ -132,7 +130,7 @@ class FloatEditor(Editor):
 
         # --- Debugging Float Edit ---
         if action_occurred:
-            error_manager.debug(f"FloatEditor.handle - End - editing_value='{self.field.editing_value}'")
+            logger.debug(f"FloatEditor.handle - End - editing_value='{self.field.editing_value}'")
         # --- End Debugging ---
 
 
@@ -141,7 +139,7 @@ class FloatEditor(Editor):
         try:
             parts = self.field.editing_value.split('.')
             if len(parts) != 2:
-                 error_manager.warning(f"FloatEditor.render - Invalid format '{self.field.editing_value}', defaulting.")
+                 logger.warning(f"FloatEditor.render - Invalid format '{self.field.editing_value}', defaulting.")
                  parts = ['0', '00'] # Default on split error
 
             # --- Manual Padding for Fractional Part ---
@@ -154,7 +152,7 @@ class FloatEditor(Editor):
             # --- End Manual Padding ---
 
         except Exception as e:
-             error_manager.error(f"FloatEditor.render - Error splitting/padding: {e}, Value='{self.field.editing_value}'")
+             logger.error(f"FloatEditor.render - Error splitting/padding: {e}, Value='{self.field.editing_value}'")
              parts = ['0', '00'] # Default on other errors
 
         # --- Use Brackets for Highlighting ---
@@ -191,7 +189,7 @@ class TextEditor(Editor):
         return True
 
     def handle(self, event):
-        error_manager.debug(f"TextEditor.handle received: Button={event.button}, Type={event.type}, CursorPos={self.cursor_pos}, Value='{self.field.editing_value}'")
+        logger.debug(f"TextEditor.handle received: Button={event.button}, Type={event.type}, CursorPos={self.cursor_pos}, Value='{self.field.editing_value}'")
 
         val = list(self.field.editing_value)
         max_len = 16
@@ -205,7 +203,7 @@ class TextEditor(Editor):
                 action_occurred = True # Cursor moved
             elif len(val) < max_len:
                 # Cursor is at end, and we have space: Add 'a' and move cursor
-                error_manager.debug("TextEditor RIGHT - At end, adding 'a'")
+                logger.debug("TextEditor RIGHT - At end, adding 'a'")
                 # Add 'a' which is the second character in ALLOWED_CHARS (index 1)
                 val.append(self.ALLOWED_CHARS[1])
                 self.cursor_pos += 1
@@ -236,19 +234,19 @@ class TextEditor(Editor):
                        val.append(new_char)
                        self.cursor_pos = 1 # Cursor is now after the new char
                        action_occurred = True
-                       error_manager.debug(f"TextEditor UP/DOWN - Added first character '{new_char}'")
+                       logger.debug(f"TextEditor UP/DOWN - Added first character '{new_char}'")
                   else:
-                       error_manager.warning("TextEditor UP/DOWN - Cannot add char, max_len is 0?")
+                       logger.warning("TextEditor UP/DOWN - Cannot add char, max_len is 0?")
              else:
                   # String is not empty, determine index
                   if 0 <= self.cursor_pos < len(val):
                        # Cursor is within the string, modify character AT cursor position
                        idx_to_modify = self.cursor_pos
-                       error_manager.debug(f"TextEditor UP/DOWN - Target index {idx_to_modify} (cursor inside)")
+                       logger.debug(f"TextEditor UP/DOWN - Target index {idx_to_modify} (cursor inside)")
                   elif self.cursor_pos == len(val):
                        # Cursor is immediately after the last character, modify the LAST character
                        idx_to_modify = self.cursor_pos - 1
-                       error_manager.debug(f"TextEditor UP/DOWN - Target index {idx_to_modify} (cursor at end)")
+                       logger.debug(f"TextEditor UP/DOWN - Target index {idx_to_modify} (cursor at end)")
 
                   if idx_to_modify != -1:
                       # Proceed with modification if index is valid
@@ -266,25 +264,25 @@ class TextEditor(Editor):
 
                           val[idx_to_modify] = next_char
                           if original_char != next_char:
-                              error_manager.debug(f"TextEditor UP/DOWN - Changed index {idx_to_modify} from '{original_char}' to '{next_char}'")
+                              logger.debug(f"TextEditor UP/DOWN - Changed index {idx_to_modify} from '{original_char}' to '{next_char}'")
                               action_occurred = True
 
                       except ValueError: # Handle if char not in ALLOWED_CHARS
                           val[idx_to_modify] = self.ALLOWED_CHARS[0] # Default to first allowed char (' ')
                           if original_char != self.ALLOWED_CHARS[0]:
                                action_occurred = True
-                               error_manager.warning(f"TextEditor UP/DOWN - Char '{original_char}' not allowed, set index {idx_to_modify} to default '{self.ALLOWED_CHARS[0]}'")
+                               logger.warning(f"TextEditor UP/DOWN - Char '{original_char}' not allowed, set index {idx_to_modify} to default '{self.ALLOWED_CHARS[0]}'")
                   else:
                       # This case should ideally not be reached if len(val) > 0
-                      error_manager.warning(f"TextEditor UP/DOWN - Could not determine valid index. CursorPos={self.cursor_pos}, len={len(val)}")
+                      logger.warning(f"TextEditor UP/DOWN - Could not determine valid index. CursorPos={self.cursor_pos}, len={len(val)}")
 
         # --- Update field value only if an action actually occurred ---
         if action_occurred:
-            error_manager.debug(f"TextEditor - Action occurred, updating value to: {''.join(val)}")
+            logger.debug(f"TextEditor - Action occurred, updating value to: {''.join(val)}")
             self.field.editing_value = "".join(val)
         else:
              if event.button in (ButtonName.LEFT, ButtonName.RIGHT, ButtonName.UP, ButtonName.DOWN):
-                 error_manager.debug("TextEditor - No effective action occurred.")
+                 logger.debug("TextEditor - No effective action occurred.")
 
     def render(self, cols):
          return pad_string(self.field.editing_value, cols)
@@ -382,14 +380,14 @@ class Field:
         # This line acts as a fallback or standard behavior if not overridden.
         self.editing_value = str(self.value)
 
-        error_manager.info(f"Confirmed '{self.name}': {self.value}")
+        logger.info(f"Confirmed '{self.name}': {self.value}")
         if self.callback:
             self.callback(self.value)
 
     def cancel(self):
         """Discards changes made during editing."""
         self.editing_value = str(self.value) # Revert editing value to last confirmed value
-        error_manager.info(f"Cancelled edit for '{self.name}'")
+        logger.info(f"Cancelled edit for '{self.name}'")
 
 
     def is_editable(self):
@@ -398,7 +396,7 @@ class Field:
     def get_editor(self):
         """Returns an appropriate Editor instance for this field."""
         # Default editor is TextEditor, subclasses override this
-        error_manager.warning(f"Using default TextEditor for field '{self.name}'")
+        logger.warning(f"Using default TextEditor for field '{self.name}'")
         return TextEditor(self)
 
 # --- Specific Field Types ---
@@ -415,7 +413,7 @@ class IntField(Field):
         try:
             self.value = int(self.editing_value)
         except ValueError:
-            error_manager.error(f"confirming IntField '{self.name}': Invalid value '{self.editing_value}'. Reverting.")
+            logger.error(f"confirming IntField '{self.name}': Invalid value '{self.editing_value}'. Reverting.")
             self.value = self._value # Revert to original if invalid
         self.editing_value = str(self.value)
         if self.callback:
@@ -430,10 +428,10 @@ class FloatField(Field):
             try:
                 initial_float = float(value)
             except (ValueError, TypeError):
-                error_manager.warning(f"FloatField '{name}' received invalid initial value '{value}'. Defaulting to 0.0.")
+                logger.warning(f"FloatField '{name}' received invalid initial value '{value}'. Defaulting to 0.0.")
                 # initial_float remains 0.0
         else:
-             error_manager.warning(f"FloatField '{name}' received None initial value. Defaulting to 0.0.")
+             logger.warning(f"FloatField '{name}' received None initial value. Defaulting to 0.0.")
              # initial_float remains 0.0
 
         # Ensure the stored value is a float
@@ -450,7 +448,7 @@ class FloatField(Field):
         try:
             self.value = float(self.editing_value)
         except ValueError:
-             error_manager.error(f"confirming FloatField '{self.name}': Invalid value '{self.editing_value}'. Reverting.")
+             logger.error(f"confirming FloatField '{self.name}': Invalid value '{self.editing_value}'. Reverting.")
              # Revert to the original float value if conversion fails
              self.value = float(self._value) # Use the initial stored float
 
@@ -583,14 +581,14 @@ class NavigationMode(UIMode):
         return self.menu_stack[-1] if self.menu_stack else self.root_menu
 
     def enter(self, manager, context=None):
-        error_manager.info("Entering Navigation Mode")
+        logger.info("Entering Navigation Mode")
         # If context specifies a menu, try to navigate to it? Complex.
         # For now, just ensure we reset scroll on entry.
         # Removed call to self._reset_scroll()
         manager.render() # Render immediately on entering
 
     def exit(self, manager):
-        error_manager.info("Exiting Navigation Mode")
+        logger.info("Exiting Navigation Mode")
         # No specific cleanup needed currently for navigation
 
     def render(self, display):
@@ -619,7 +617,7 @@ class NavigationMode(UIMode):
         lines_to_show = [title, item_text] # Example for 2-row display
   
         # Assuming 'display' is the DisplayController instance
-        error_manager.info(lines_to_show)
+        logger.info(lines_to_show)
         display.show_message(*lines_to_show, scrolling_lines=[0, 1])
 
     def handle_event(self, event, manager):
@@ -662,7 +660,7 @@ class NavigationMode(UIMode):
                             except Exception as e:
                                 # Log the error in addition to printing
                                 error_message = f"Error executing action '{item.name}': {e}"
-                                error_manager.error(error_message)
+                                logger.error(error_message)
                                 # Optionally show error on display?
                         handled = True
             # Note: Back (LEFT) is handled as long press below
@@ -710,7 +708,7 @@ class Page(MonitorPage):
             line2 = self.line2_provider()
             display.show_message(str(line1), str(line2))
         except Exception as e:
-            error_manager.error(f"getting page content: {e}")
+            logger.error(f"getting page content: {e}")
             # Try to display something informative
             try:
                 display.show_message("Err:", str(e)[:display.cols])
@@ -729,7 +727,7 @@ class MonitoringMode(UIMode):
         # Services are no longer stored here
         self.refresh_interval_ms = refresh_interval_ms
         self._refresh_task = None # Handle for the refresh task
-        error_manager.info(f"MonitoringMode initialized (Refresh: {refresh_interval_ms}ms)")
+        logger.info(f"MonitoringMode initialized (Refresh: {refresh_interval_ms}ms)")
 
     def add_page(self, page_object):
         """Adds a MonitorPage object to the list."""
@@ -737,15 +735,15 @@ class MonitoringMode(UIMode):
             self.pages.append(page_object)
             # Try to get a meaningful name, fallback for instances
             page_name = getattr(page_object, 'name', type(page_object).__name__)
-            error_manager.info(f"Added monitor page: {page_name}")
+            logger.info(f"Added monitor page: {page_name}")
         else:
-            error_manager.error("Error: Tried to add non-MonitorPage object to MonitoringMode")
+            logger.error("Error: Tried to add non-MonitorPage object to MonitoringMode")
 
     def enter(self, manager, context=None):
-        error_manager.info("Entering Monitoring Mode")
+        logger.info("Entering Monitoring Mode")
         # Ensure index is valid on entry, especially if pages were added dynamically
         if not self.pages:
-            error_manager.warning("Warning: MonitoringMode has no pages.")
+            logger.warning("Warning: MonitoringMode has no pages.")
             self.current_page_index = -1 # Indicate no valid page
         else:
             self.current_page_index = max(0, min(self.current_page_index, len(self.pages) - 1))
@@ -754,13 +752,13 @@ class MonitoringMode(UIMode):
         self._cancel_refresh_task() # Ensure no old task is running
         if self.refresh_interval_ms > 0:
             self._refresh_task = asyncio.create_task(self._refresh_task_coro(manager))
-            error_manager.info("MonitoringMode: Started refresh task.")
+            logger.info("MonitoringMode: Started refresh task.")
 
         manager.render() # Render the current page immediately
 
     def exit(self, manager):
         """Called when switching away from this mode."""
-        error_manager.info("Exiting Monitoring Mode")
+        logger.info("Exiting Monitoring Mode")
         self._cancel_refresh_task()
 
     def render(self, display):
@@ -772,7 +770,7 @@ class MonitoringMode(UIMode):
                 page_obj.render(display)
             except Exception as e:
                 error_message = f"Error rendering monitor page {self.current_page_index}: {e}"
-                error_manager.error(error_message)
+                logger.error(error_message)
                 display.show_message("Monitor Error", f"Page {self.current_page_index+1} err")
         else:
             # No pages or invalid index
@@ -805,42 +803,42 @@ class MonitoringMode(UIMode):
     # --- Refresh Task ---
     async def _refresh_task_coro(self, manager):
         """Coroutine that periodically triggers a re-render."""
-        error_manager.info("MonitoringMode Refresh Task: Started.")
+        logger.info("MonitoringMode Refresh Task: Started.")
         try:
             while True:
                 await asyncio.sleep_ms(self.refresh_interval_ms)
-                error_manager.info("MonitoringMode Refresh Task: Tick - Rendering.")
+                logger.info("MonitoringMode Refresh Task: Tick - Rendering.")
                 try:
                     # Check if we are still in monitoring mode before rendering
                     # This is a safety check, exit() should cancel the task.
                     if manager.current_mode is self:
                         manager.render()
                     else:
-                        error_manager.info("MonitoringMode Refresh Task: Mode changed, exiting loop.")
+                        logger.info("MonitoringMode Refresh Task: Mode changed, exiting loop.")
                         break
                 except Exception as e:
                     # Log error during render
                     error_message = f"Error during monitor refresh render: {e}"
-                    error_manager.error(error_message)
+                    logger.error(error_message)
                     # Continue trying to refresh
         except asyncio.CancelledError:
-            error_manager.info("MonitoringMode Refresh Task: Cancelled.")
+            logger.info("MonitoringMode Refresh Task: Cancelled.")
         except Exception as e:
             # Log general task error
             error_message = f"Error in MonitoringMode Refresh Task: {e}"
-            error_manager.error(error_message)
+            logger.error(error_message)
         finally:
-            error_manager.info("MonitoringMode Refresh Task: Finished.")
+            logger.info("MonitoringMode Refresh Task: Finished.")
 
     def _cancel_refresh_task(self):
         """Safely cancels the refresh task if it's running."""
         if self._refresh_task and not self._refresh_task.done():
             try:
-                error_manager.info("MonitoringMode: Cancelling refresh task.")
+                logger.info("MonitoringMode: Cancelling refresh task.")
                 self._refresh_task.cancel()
                 # Allow the task to finish cancelling itself
             except Exception as e:
-                error_manager.error(f"cancelling refresh task: {e}")
+                logger.error(f"cancelling refresh task: {e}")
         self._refresh_task = None # Clear the handle
 
 
@@ -854,25 +852,25 @@ class EditingMode(UIMode):
         self._cursor_visible_state = False
 
     def enter(self, manager, context):
-        error_manager.info("Entering Editing Mode")
+        logger.info("Entering Editing Mode")
         if context and isinstance(context.get('field'), Field):
             self.editing_field = context['field']
             # --- Use the field's existing editing_value which should be pre-formatted ---
             # No need to reset here, FloatField init/confirm handles formatting.
             # self.editing_field.editing_value = str(self.editing_field.value) # OLD
-            error_manager.debug(f"DEBUG: EditingMode.enter - Using Field's editing_value: '{self.editing_field.editing_value}'")
+            logger.debug(f"DEBUG: EditingMode.enter - Using Field's editing_value: '{self.editing_field.editing_value}'")
             # --- End Change ---
 
             self.editor = self.editing_field.get_editor()
-            error_manager.info(f"Editing field: {self.editing_field.name} with {type(self.editor).__name__}")
+            logger.info(f"Editing field: {self.editing_field.name} with {type(self.editor).__name__}")
             manager.render() # Render editor immediately
         else:
             error_message = "Error: EditingMode entered without valid 'field' in context."
-            error_manager.error(error_message) # Log as warning
+            logger.error(error_message) # Log as warning
             manager.switch_mode("navigation")
 
     def exit(self, manager):
-        error_manager.info("Exiting Editing Mode")
+        logger.info("Exiting Editing Mode")
         # Ensure cursor is turned off if it was on
         if self._cursor_visible_state:
             manager.display.show_cursor(False)
@@ -884,7 +882,7 @@ class EditingMode(UIMode):
     def render(self, display):
         if not self.editor or not self.editing_field:
             error_message = "EditingMode.render: Editor or field missing!"
-            error_manager.warning(error_message) # Log as warning
+            logger.warning(error_message) # Log as warning
             display.show_message("Edit Error", "")
             if self._cursor_visible_state: display.show_cursor(False)
             self._cursor_visible_state = False
@@ -926,7 +924,7 @@ class EditingMode(UIMode):
 
     def handle_event(self, event, manager):
         if not self.editor: return False
-        error_manager.debug(f"EditingMode.handle_event received: Button={event.button}, Type={event.type}")
+        logger.debug(f"EditingMode.handle_event received: Button={event.button}, Type={event.type}")
 
         start_repeat = False
         handled = False
@@ -934,7 +932,7 @@ class EditingMode(UIMode):
 
         # --- Exit / Confirm / Cancel ---
         if event.button == ButtonName.LEFT and event.type == ButtonEventType.PRESSED_LONG:
-            error_manager.debug("EditingMode - Matched: LONG PRESS on LEFT (Cancel)")
+            logger.debug("EditingMode - Matched: LONG PRESS on LEFT (Cancel)")
             self.editor.cancel()
             manager.switch_mode("navigation")
             return True # Consumed, do not call editor handle
@@ -942,7 +940,7 @@ class EditingMode(UIMode):
         elif event.button == ButtonName.SELECT:
             # Confirm on PRESS or LONG_PRESS
             if event.type == ButtonEventType.PRESSED or event.type == ButtonEventType.PRESSED_LONG:
-                error_manager.debug(f"EditingMode - Matched: {'PRESS' if event.type == ButtonEventType.PRESSED else 'LONG PRESS'} on SELECT (Confirm)")
+                logger.debug(f"EditingMode - Matched: {'PRESS' if event.type == ButtonEventType.PRESSED else 'LONG PRESS'} on SELECT (Confirm)")
                 self.editor.confirm()
                 manager.switch_mode("navigation")
                 return True # Consumed, do not call editor handle
@@ -951,11 +949,11 @@ class EditingMode(UIMode):
         # Run editor logic for standard presses of LEFT/RIGHT/UP/DOWN
         # Also run for LONG presses of UP/DOWN (to handle the initial action before repeat starts)
         if event.type == ButtonEventType.PRESSED and event.button in (ButtonName.LEFT, ButtonName.RIGHT, ButtonName.UP, ButtonName.DOWN):
-            error_manager.debug("EditingMode - Condition Met: Standard PRESS on directional")
+            logger.debug("EditingMode - Condition Met: Standard PRESS on directional")
             call_editor_handle = True
             handled = True
         elif event.type == ButtonEventType.PRESSED_LONG and event.button in (ButtonName.UP, ButtonName.DOWN):
-            error_manager.debug("EditingMode - Condition Met: LONG PRESS on UP/DOWN")
+            logger.debug("EditingMode - Condition Met: LONG PRESS on UP/DOWN")
             call_editor_handle = True
             handled = True
             start_repeat = 'start_repeat' # Signal repeat ONLY on long press UP/DOWN
@@ -967,12 +965,12 @@ class EditingMode(UIMode):
 
         # --- Call Editor Handle if needed ---
         if call_editor_handle:
-            error_manager.debug("EditingMode - Calling self.editor.handle()")
+            logger.debug("EditingMode - Calling self.editor.handle()")
             try:
                 self.editor.handle(event)
             except Exception as e:
                 error_message = f"Exception during self.editor.handle(): {e}"
-                error_manager.error(error_message)
+                logger.error(error_message)
         # else:
         #      if DEBUG >= 2: print("DEBUG: EditingMode - NOT calling self.editor.handle()") # DEBUG
 
@@ -1010,14 +1008,14 @@ class GUIManager(ButtonObserver):
         if hasattr(input_device, 'add_observer'):
              input_device.add_observer(self)
         else:
-             error_manager.warning("Warning: Input device lacks add_observer method.")
+             logger.warning("Warning: Input device lacks add_observer method.")
 
     def add_mode(self, name, mode_instance):
         """Registers a UI mode instance with a unique name."""
         if not isinstance(mode_instance, UIMode):
              raise TypeError("mode_instance must be a subclass of UIMode")
         self.modes[name] = mode_instance
-        error_manager.info(f"Mode '{name}' registered ({type(mode_instance).__name__})")
+        logger.info(f"Mode '{name}' registered ({type(mode_instance).__name__})")
 
 
     def switch_mode(self, name, context=None):
@@ -1026,12 +1024,12 @@ class GUIManager(ButtonObserver):
             name (str): The name of the mode to switch to.
             context (any): Optional data to pass to the new mode's enter() method.
         """
-        error_manager.info(f"Attempting to switch mode to: {name}")
+        logger.info(f"Attempting to switch mode to: {name}")
         target_mode = self.modes.get(name)
 
         if not target_mode:
             error_message = f"Error: Mode '{name}' not found!"
-            error_manager.error(error_message)
+            logger.error(error_message)
             return
 
         # Cancel any ongoing repeat task before switching modes
@@ -1043,7 +1041,7 @@ class GUIManager(ButtonObserver):
                 self.current_mode.exit(self)
             except Exception as e:
                 error_message = f"Error calling exit() on mode {self.current_mode_name}: {e}"
-                error_manager.error(error_message)
+                logger.error(error_message)
 
         # Set the new mode
         self.current_mode_name = name
@@ -1051,13 +1049,13 @@ class GUIManager(ButtonObserver):
 
         # Call enter() on the new mode
         try:
-            error_manager.info(f"Entering mode '{name}'...")
+            logger.info(f"Entering mode '{name}'...")
             self.current_mode.enter(self, context)
             # Initial render should be triggered by enter() or subsequent event handling
             # self.render() # Avoid double rendering if enter() calls render()
         except Exception as e:
             error_message = f"Error calling enter() on mode {self.current_mode_name}: {e}"
-            error_manager.error(error_message)
+            logger.error(error_message)
             self.current_mode = None
             self.current_mode_name = None
 
@@ -1071,7 +1069,7 @@ class GUIManager(ButtonObserver):
                 self.current_mode.render(self.display)
             except Exception as e:
                 error_message = f"Error rendering mode {self.current_mode_name}: {e}"
-                error_manager.error(error_message)
+                logger.error(error_message)
                 self.display.show_message("Render Error", f"{e}")
         else:
             # Display something if no mode is active (e.g., during startup or error)
@@ -1083,7 +1081,7 @@ class GUIManager(ButtonObserver):
         # print(f"GUIManager received event: {event} | Current repeat button: {self._repeat_button}") # More debug
 
         if not self.current_mode:
-            error_manager.error("No current mode to handle event")
+            logger.error("No current mode to handle event")
             return # Ignore events if no mode is active
 
         response = None # Store response from mode's handler
@@ -1099,7 +1097,7 @@ class GUIManager(ButtonObserver):
                                         event.type in (ButtonEventType.PRESSED, ButtonEventType.PRESSED_LONG))
 
             if is_release_of_repeat_button or is_press_on_other_button:
-                error_manager.debug(f"Stopping repeat task for '{self._repeat_button}' due to event: Button='{event.button}', Type={event.type}")
+                logger.debug(f"Stopping repeat task for '{self._repeat_button}' due to event: Button='{event.button}', Type={event.type}")
                 self._cancel_repeat_task()
                 # Note: We still process the event that caused the cancellation below.
 
@@ -1108,7 +1106,7 @@ class GUIManager(ButtonObserver):
             response = self.current_mode.handle_event(event, self)
         except Exception as e:
              error_message = f"Error handling event in mode {self.current_mode_name}: {e}"
-             error_manager.error(error_message)
+             logger.error(error_message)
              # Optionally show error on display or switch to error mode
 
 
@@ -1120,14 +1118,14 @@ class GUIManager(ButtonObserver):
                  # Check if the event that triggered this is still valid for repeating
                  if event.button in (ButtonName.UP, ButtonName.DOWN) and event.type == ButtonEventType.PRESSED_LONG:
                      self._repeat_button = event.button
-                     error_manager.debug(f"Manager starting repeat task for {self._repeat_button}")
+                     logger.debug(f"Manager starting repeat task for {self._repeat_button}")
                      # The mode's handle_event should have handled the *first* action already.
                      # Schedule the async task to handle subsequent repeats.
                      self._repeat_task = asyncio.create_task(self._repeat_action_task())
                  else:
-                      error_manager.warning(f"'start_repeat' signal received for non-repeatable event: {event.button}, {event.type}")
+                      logger.warning(f"'start_repeat' signal received for non-repeatable event: {event.button}, {event.type}")
             else:
-                 error_manager.warning(f"'start_repeat' signal ignored, task already active for {self._repeat_button}.")
+                 logger.warning(f"'start_repeat' signal ignored, task already active for {self._repeat_button}.")
 
         # Rendering is handled within mode's handle_event or enter methods.
 
@@ -1135,10 +1133,10 @@ class GUIManager(ButtonObserver):
     async def _repeat_action_task(self):
         """Asynchronous task that repeatedly simulates PRESSED events for UP/DOWN."""
         if not self._repeat_button:
-             error_manager.error("_repeat_action_task started without _repeat_button set.")
+             logger.error("_repeat_action_task started without _repeat_button set.")
              return
 
-        error_manager.debug(f"Repeat task started: Button {self._repeat_button}")
+        logger.debug(f"Repeat task started: Button {self._repeat_button}")
         # Store button locally in case self._repeat_button is cleared by cancellation
         repeating_button = self._repeat_button
 
@@ -1164,35 +1162,35 @@ class GUIManager(ButtonObserver):
                     self.current_mode.handle_event(sim_event, self)
                 except Exception as e:
                     error_message = f"Error handling repeat event in mode {self.current_mode_name}: {e}"
-                    error_manager.error(error_message)
+                    logger.error(error_message)
                     break # Stop repeating on error
 
         except asyncio.CancelledError:
-            error_manager.info(f"Repeat task cancelled for Button {repeating_button}")
+            logger.info(f"Repeat task cancelled for Button {repeating_button}")
             # This is expected when _cancel_repeat_task is called
         except Exception as e:
             error_message = f"Unexpected error in repeat task: {e}"
-            error_manager.error(error_message)
+            logger.error(error_message)
         finally:
-            error_manager.debug(f"Repeat task finished for Button {repeating_button}.")
+            logger.debug(f"Repeat task finished for Button {repeating_button}.")
             # Clean up state ONLY if this task instance is the one currently stored
             # (prevents race conditions if cancelled/restarted quickly)
             current_task = asyncio.current_task()
             if self._repeat_task is current_task:
                 self._repeat_task = None
                 self._repeat_button = None
-                error_manager.debug("Repeat task state cleared by task itself.")
+                logger.debug("Repeat task state cleared by task itself.")
 
     def _cancel_repeat_task(self):
             """Safely cancels the asyncio repeat task if it's running."""
             if self._repeat_task and not self._repeat_task.done():
                 try:
-                    error_manager.info(f"Cancelling repeat task for Button {self._repeat_button}")
+                    logger.info(f"Cancelling repeat task for Button {self._repeat_button}")
                     self._repeat_task.cancel()
                     # Important: Let the task's finally block clear _repeat_task and _repeat_button
                     # to avoid race conditions. Do not clear them here directly.
                 except Exception as e:
-                    error_manager.error(f"Error during repeat task cancellation: {e}")
+                    logger.error(f"Error during repeat task cancellation: {e}")
         # else:
             # print("Cancel requested, but no repeat task active or already finished.")
 
@@ -1242,12 +1240,12 @@ class LogView(UIMode):
 
         except Exception as e:
             error_message = f"Error loading log file buffer: {e}"
-            error_manager.error(error_message)
+            logger.error(error_message)
             self.buffer = [] # Clear buffer on error
             self.end_of_file_reached = True # Treat error as EOF
 
     def enter(self, manager, context=None):
-        error_manager.info("Entering LogView Mode")
+        logger.info("Entering LogView Mode")
         self.current_line_index = 0
         self.cursor_position = 0
         self.buffer_start_index = 0
@@ -1257,7 +1255,7 @@ class LogView(UIMode):
         manager.render()
 
     def exit(self, manager):
-        error_manager.info("Exiting LogView Mode")
+        logger.info("Exiting LogView Mode")
         self.buffer = []
 
     def render(self, display):

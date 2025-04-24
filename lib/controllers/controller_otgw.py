@@ -2,9 +2,8 @@ import uasyncio
 from machine import UART, Pin
 import time
 import platform_spec as cfg
-from managers.manager_logger import Logger # Assuming ErrorManager is in lib
+from initialization import logger
 
-logger = Logger()
 # OTGW Response Codes
 OTGW_RESPONSE_OK = 0
 OTGW_RESPONSE_NG = 1 # No Good (Unknown command)

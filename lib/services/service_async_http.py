@@ -9,9 +9,8 @@ import errno
 # import _thread # No longer needed for get_ident here
 import asyncio # <<< ADDSYNCIO IMPORT
 
-from managers.manager_logger import Logger
+from initialization import logger
 
-logger = Logger()
 
 
 try:

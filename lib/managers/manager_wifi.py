@@ -1,6 +1,6 @@
 import time
 import network
-from managers.manager_logger import Logger
+from initialization import logger
 
 
 # --- WiFi Management ---
@@ -21,23 +21,22 @@ class WiFiManager:
         self._status = WiFiManager.STATUS_DISCONNECTED
         self._last_attempt_time = 0
         self._ip_address = None
-        self.error_manager = Logger()
 
         try:
             self._wlan = network.WLAN(network.STA_IF)
             self._wlan.active(False) # Start inactive
             network.hostname(self.hostname)
-            self.error_manager.info("WiFiManager: WLAN interface initialized.")
+            logger.info("WiFiManager: WLAN interface initialized.")
             # Set initial status based on whether credentials are provided
             if self.ssid:
                  self._status = WiFiManager.STATUS_DISCONNECTED
-                 self.error_manager.info("WiFiManager: Ready to connect.")
+                 logger.info("WiFiManager: Ready to connect.")
             else:
                  self._status = WiFiManager.STATUS_DISCONNECTED # Or maybe a dedicated NO_CREDS status?
-                 self.error_manager.error("WiFiManager: No SSID configured, will remain disconnected.")
+                 logger.error("WiFiManager: No SSID configured, will remain disconnected.")
 
         except Exception as e:
-            self.error_manager.fatal("WiFiManager Error: Failed to initialize WLAN interface", e)
+            logger.fatal("WiFiManager Error: Failed to initialize WLAN interface", e)
             self._status = WiFiManager.STATUS_ERROR
 
     def _can_attempt_connect(self):
@@ -54,7 +53,7 @@ class WiFiManager:
 
         if self._status == WiFiManager.STATUS_CONNECTED:
             if not is_physically_connected:
-                self.error_manager.error("WiFiManager: Connection lost.")
+                logger.error("WiFiManager: Connection lost.")
                 self._status = WiFiManager.STATUS_DISCONNECTED
                 self._ip_address = None
                 self._wlan.active(False) # Deactivate to ensure clean reconnect
@@ -66,10 +65,10 @@ class WiFiManager:
         elif self._status == WiFiManager.STATUS_CONNECTING:
             if is_physically_connected:
                 self._ip_address = self._wlan.ifconfig()[0]
-                self.error_manager.info(f"WiFiManager: Connected. IP: {self._ip_address}")
+                logger.info(f"WiFiManager: Connected. IP: {self._ip_address}")
                 self._status = WiFiManager.STATUS_CONNECTED
             elif self._wlan.status() < 0 or self._wlan.status() >= 3: # Error codes like WRONG_PASSWORD, NO_AP_FOUND, CONN_FAIL
-                self.error_manager.error(f"WiFiManager: Connection failed. Status code: {self._wlan.status()}. Retrying later.")
+                logger.error(f"WiFiManager: Connection failed. Status code: {self._wlan.status()}. Retrying later.")
                 self._status = WiFiManager.STATUS_DISCONNECTED
                 self._wlan.active(False) # Deactivate
                 self._last_attempt_time = time.ticks_ms() # Start retry timer
@@ -77,14 +76,14 @@ class WiFiManager:
 
         elif self._status == WiFiManager.STATUS_DISCONNECTED:
             if self._can_attempt_connect():
-                self.error_manager.info(f"WiFiManager: Attempting to connect to '{self.ssid}'...")
+                logger.info(f"WiFiManager: Attempting to connect to '{self.ssid}'...")
                 self._last_attempt_time = time.ticks_ms()
                 try:
                     self._wlan.active(True)
                     self._wlan.connect(self.ssid, self.password)
                     self._status = WiFiManager.STATUS_CONNECTING
                 except Exception as e:
-                    self.error_manager.error(f"WiFiManager Error: Exception during connect initiation: {e}")
+                    logger.error(f"WiFiManager Error: Exception during connect initiation: {e}")
                     self._status = WiFiManager.STATUS_DISCONNECTED # Stay disconnected, retry later
                     self._wlan.active(False) # Ensure it's off if connect failed badly
 

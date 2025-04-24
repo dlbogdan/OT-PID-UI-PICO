@@ -2,9 +2,8 @@ import uos
 import time
 from machine import reset
 from platform_spec import DEFAULT_FACTORY_CONFIG
-from managers.manager_logger import Logger
+from initialization import logger
 
-logger = Logger()
 
 # --- Configuration Management ---
 # class ConfigManager: ... (NO CHANGES NEEDED) ...
