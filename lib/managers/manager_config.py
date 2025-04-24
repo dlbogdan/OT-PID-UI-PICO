@@ -1,7 +1,7 @@
 import uos
 import time
 from machine import reset
-from hardware_config import DEFAULT_FACTORY_CONFIG
+from platform_spec import DEFAULT_FACTORY_CONFIG
 from managers.manager_logger import Logger
 
 logger = Logger()
@@ -10,14 +10,15 @@ logger = Logger()
 # class ConfigManager: ... (NO CHANGES NEEDED) ...
 class ConfigManager:
     """Handles reading and writing values in a simple .ini-style config file."""
-    def __init__(self, filename):
-        self.filename = filename
+    def __init__(self, filename_config:str, filename_factory:str):
+        self.filename_config = filename_config
+        self.filename_factory = filename_factory
         self.config = {}
         self._load_config()
 
     def _load_config(self):
         try:
-            with open(self.filename, 'r') as f:
+            with open(self.filename_config, 'r') as f:
                 current_section = None
                 for line in f:
                     line = line.strip()
@@ -46,7 +47,7 @@ class ConfigManager:
     def save_config(self):
         """Save the current configuration to the config file."""
         try:
-            with open(self.filename, 'w') as f:
+            with open(self.filename_config, 'w') as f:
                 for section, items in self.config.items():
                     f.write(f'[{section}]\n')
                     for key, value in items.items():
@@ -61,8 +62,8 @@ class ConfigManager:
 # --- Factory Reset Function ---
 def factory_reset(display, led, config_manager, hm_service):
     """Performs a factory reset: deletes cache, restores config, reboots."""
-    factory_config_file = "config_factory.txt"
-    config_file = config_manager.filename # Get current config filename
+    factory_config_file = config_manager.filename_factory
+    config_file = config_manager.filename_config # Get current config filename
     cache_file = "hm_device_cache.json" # Assuming this is the name used in HomematicDataService
 
     logger.info("--- Factory Reset Initiated ---")

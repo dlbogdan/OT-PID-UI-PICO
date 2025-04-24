@@ -1,7 +1,7 @@
 import uasyncio
 from machine import UART, Pin
 import time
-import hardware_config as cfg
+import platform_spec as cfg
 from managers.manager_logger import Logger # Assuming ErrorManager is in lib
 
 logger = Logger()

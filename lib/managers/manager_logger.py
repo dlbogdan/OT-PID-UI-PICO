@@ -1,7 +1,7 @@
 import json
 import time
 from machine import reset
-from flags import DEBUG
+
 class Logger:
     """Manages error logging with minimal flash writes."""
 
@@ -50,24 +50,24 @@ class Logger:
 
     def warning(self, message):
         """Logs a warning message to the history."""
-        if DEBUG>=1:
+        if self._debug_level>=1:
             print(f"WARNING: {message}")
         self._add_to_history("WARNING", message)
 
     def info(self, message):
         """Logs an informational message."""
-        if DEBUG>=2:
+        if self._debug_level>=2:
             print(f"INFO: {message}")
         #self._add_to_history("INFO", message) 
 
     def debug(self, message):
         """Logs a debug message."""
-        if DEBUG>=3:
+        if self._debug_level>=3:
             print(f"DEBUG: {message}")
 
     def trace(self, message):
         """Logs a trace message."""
-        if DEBUG>=4:
+        if self._debug_level>=4:
             print(f"TRACE: {message}")
 
     def _log_to_file(self,level, message):

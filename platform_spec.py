@@ -135,24 +135,12 @@ def HWUART():
     """Initialize UART and return the instance."""
     return UART(OT_UART_ID, baudrate=OT_UART_BAUDRATE, tx=Pin(OT_UART_TX_PIN), rx=Pin(OT_UART_RX_PIN), timeout=10, timeout_char=10)
 
-# def init_hardware():
-#     """Initialize all hardware components and return a dictionary with the instances."""
-#     i2c = init_i2c()
-#     mcp = init_mcp(i2c)
-#     led_ctrl = init_rgb_led(mcp)
-#     lcd = init_lcd(mcp)
-#     button_ctrl = init_buttons(mcp)
-    
-#     return {
-#         'i2c': i2c,
-#         'mcp': mcp,
-#         'led_ctrl': led_ctrl,
-#         'lcd': lcd,
-#         'button_ctrl': button_ctrl
-#     }
+def ConfigFileName(factory:bool=False):
+    if factory:
+        return "config_factory.txt"
+    else:
+        return "config.txt"
 
-# --- Default Factory Configuration ---
-# !!! REPLACE PLACEHOLDERS WITH YOUR ACTUAL DEFAULTS !!!
 DEFAULT_FACTORY_CONFIG = {
     "WIFI": {
         "SSID": "DEFAULT_SSID",

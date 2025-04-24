@@ -10,7 +10,7 @@ from managers.manager_wifi import WiFiManager
 from managers.manager_config import ConfigManager
 
 # Assuming service_mqtt.py is in the same directory or /lib
-
+from platform_spec import ConfigFileName
 from services.boilerhaentity import BoilerController
 
 
@@ -18,7 +18,7 @@ from services.boilerhaentity import BoilerController
 config = None
 try:
     if ConfigManager is not None:
-        config = ConfigManager("config.txt")
+        config = ConfigManager(ConfigFileName(), ConfigFileName(factory=True))
         WIFI_SSID = config.get_value("WIFI", "SSID")
         WIFI_PASS = config.get_value("WIFI", "PASS")
     else:

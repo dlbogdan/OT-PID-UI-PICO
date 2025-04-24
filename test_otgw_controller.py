@@ -6,7 +6,7 @@ import select
 from controllers.controller_otgw import OpenThermController # Keep controller import for instantiation
 from managers.manager_otgw import OpenThermManager, CMD_STATUS_PENDING, CMD_STATUS_SUCCESS # Import Manager
 from managers.manager_logger import Logger
-from hardware_config import HWUART
+from platform_spec import HWUART
 # Instantiate the Logger
 error_manager = Logger()
 

@@ -14,9 +14,9 @@ import uos
 from machine import reset
 
 # 3rd‑party / project modules
-from hardware_config import (
+from platform_spec import (
     HWi2c, HWMCP, HWLCD, HWRGBLed, HWButtons, HWUART,
-    unique_hardware_name, CUSTOM_CHARS,
+    unique_hardware_name, CUSTOM_CHARS, ConfigFileName
 )
 from controllers.controller_display import DisplayController
 from controllers.controller_HID import HIDController
@@ -31,9 +31,10 @@ from managers.manager_config import ConfigManager, factory_reset
 from managers.manager_logger import Logger
 from managers.manager_wifi import WiFiManager
 from services.service_homematic_rpc import HomematicDataService
+from flags import DEBUG
 
 DEVELOPMENT_MODE=1
-logger = Logger()
+logger = Logger(DEBUG)
 
 # --------------------------------------------------------------------------- #
 #  Globals & runtime state
@@ -69,9 +70,9 @@ Kp, Ki, Kd, OUT = 0.0, 0.0, 0.0, 54.0
 #     return display, led, buttons
 
 
-def load_config(path: str = "config.txt"):
+def load_config(cfg_mgr):
     """Return `(config_manager, cfg_values_dict)` from *path*."""
-    cfg_mgr = ConfigManager(path)
+
 
     def _bool(section, key, default=False):
         # --- Debugging ---
@@ -114,7 +115,7 @@ def load_config(path: str = "config.txt"):
         "mqtt_base_topic": cfg_mgr.get_value("MQTT", "BASE_TOPIC", "home/ot-controller"),
     }
 
-    return cfg_mgr, cfg
+    return cfg
 
 
 # --------------------------------------------------------------------------- #
@@ -318,11 +319,13 @@ def main():  # noqa: C901
         handle_fatal_error("Hardware", None, None, str(e))
         return
 
-    cfg_mgr, cfg = load_config()
+
 
     # -------------------------------- Services Initialisation ------------------- #
     try:  
         logger.info(f"Initialising services")
+        cfg_mgr = ConfigManager(ConfigFileName(), ConfigFileName(factory=True))
+        cfg = load_config(cfg_mgr)
         wifi = WiFiManager(cfg["ssid"], cfg["wifi_pass"], unique_hardware_name()[:15])
         hm = HomematicDataService(
             f"http://{cfg['ccu_ip']}/api/homematic.cgi",
