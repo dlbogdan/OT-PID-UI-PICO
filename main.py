@@ -15,7 +15,7 @@ from machine import reset
 
 # 3rd‑party / project modules
 from hardware_config import (
-    init_i2c, init_mcp, init_lcd, init_rgb_led, init_buttons,
+    HWi2c, HWMCP, HWLCD, HWRGBLed, HWButtons, HWUART,
     unique_hardware_name, CUSTOM_CHARS,
 )
 from controllers.controller_display import DisplayController
@@ -33,8 +33,8 @@ from managers.manager_wifi import WiFiManager
 from services.service_homematic_rpc import HomematicDataService
 
 DEVELOPMENT_MODE=1
-error_manager = Logger()
-DEBUG = error_manager.get_level()
+logger = Logger()
+
 # --------------------------------------------------------------------------- #
 #  Globals & runtime state
 # --------------------------------------------------------------------------- #
@@ -58,15 +58,15 @@ Kp, Ki, Kd, OUT = 0.0, 0.0, 0.0, 54.0
 #  Initialisation helpers
 # --------------------------------------------------------------------------- #
 
-def init_hardware():
-    """Initialise I²C bus, peripherals and OpenTherm driver."""
-    i2c = init_i2c()
-    mcp = init_mcp(i2c)
-    display = DisplayController(init_lcd(mcp))
-    led = init_rgb_led(mcp)
-    buttons = init_buttons(mcp)
-
-    return display, led, buttons
+# def init_hardware():
+#     """Initialise I²C bus, peripherals and OpenTherm driver."""
+#     i2c = init_i2c()
+#     mcp = init_mcp(i2c)
+#     display = DisplayController(init_lcd(mcp))
+#     led = init_rgb_led(mcp)
+#     buttons = init_buttons(mcp)
+    
+#     return display, led, buttons
 
 
 def load_config(path: str = "config.txt"):
@@ -76,7 +76,7 @@ def load_config(path: str = "config.txt"):
     def _bool(section, key, default=False):
         # --- Debugging ---
         raw_value = cfg_mgr.get_value(section, key, default)
-        error_manager.info(f"DEBUG _bool: Section='{section}', Key='{key}', RawValue='{raw_value}' (Type: {type(raw_value)})")
+        logger.info(f"DEBUG _bool: Section='{section}', Key='{key}', RawValue='{raw_value}' (Type: {type(raw_value)})")
         # --- End Debugging ---
 
         # Get value, strip whitespace, convert to lower, then compare
@@ -84,7 +84,7 @@ def load_config(path: str = "config.txt"):
         result = value_str == "true"
 
         # --- Debugging ---
-        error_manager.info(f"DEBUG _bool: Processed Value='{value_str}', Result={result}")
+        logger.info(f"DEBUG _bool: Processed Value='{value_str}', Result={result}")
         # --- End Debugging ---
         return result
 
@@ -122,18 +122,18 @@ def load_config(path: str = "config.txt"):
 # --------------------------------------------------------------------------- #
 
 def handle_fatal_error(err_type, display, led, msg, tb=None):
-    error_manager.fatal(err_type, msg, tb)
+    logger.fatal(err_type, msg, tb)
     try:
         if display:
             display.show_message("FATAL ERROR", "REBOOTING..." if not DEVELOPMENT_MODE else "ERROR")
         if led:
             led.direct_send_color("red")
     except Exception as disp_exc:  # noqa: BLE001
-        error_manager.error(f"Display fail in fatal handler: {disp_exc}")
+        logger.error(f"Display fail in fatal handler: {disp_exc}")
 
     time.sleep(2)
     if DEVELOPMENT_MODE:
-        error_manager.error(f"[DEV] FATAL {err_type}: {msg}\n{tb}")
+        logger.error(f"[DEV] FATAL {err_type}: {msg}\n{tb}")
         while True:
             time.sleep(1)
     else:
@@ -149,7 +149,7 @@ async def wifi_task(wifi):
         try:
             wifi.update()
         except Exception as e:  # noqa: BLE001
-            error_manager.error(f"WiFi: {e}")
+            logger.error(f"WiFi: {e}")
         await asyncio.sleep(5)
 
 
@@ -158,7 +158,7 @@ async def led_task(led):
         try:
             led.update()
         except Exception as e:  # noqa: BLE001
-            error_manager.error(f"LED: {e}")
+            logger.error(f"LED: {e}")
         await asyncio.sleep_ms(100)
 
 
@@ -167,7 +167,7 @@ async def homematic_task(hm):
         try:
             hm.update()
         except Exception as e:  # noqa: BLE001
-            error_manager.error(f"HM: {e}")
+            logger.error(f"HM: {e}")
         await asyncio.sleep(5)
 
 
@@ -180,22 +180,22 @@ async def poll_buttons_task(hid):
 async def error_rate_limiter_task(hm, wifi, led):
     """Watch the `ErrorManager` limiter flag and perform a quick reset cycle."""
     while True:
-        if error_manager.error_rate_limiter_reached:
-            error_manager.warning("Error‑rate limiter TRIGGERED – running cooldown cycle")
+        if logger.error_rate_limiter_reached:
+            logger.warning("Error‑rate limiter TRIGGERED – running cooldown cycle")
             try:
                 hm.set_paused(True)
                 wifi.disconnect()
                 led.set_color("red", blink=False)
             except Exception as e:  # noqa: BLE001
-                error_manager.error(f"Limiter prep: {e}")
+                logger.error(f"Limiter prep: {e}")
 
-            error_manager.reset_error_rate_limiter()
+            logger.reset_error_rate_limiter()
 
             try:
                 hm.set_paused(False)
                 wifi.update()
             except Exception as e:  # noqa: BLE001
-                error_manager.error(f"Limiter resume: {e}")
+                logger.error(f"Limiter resume: {e}")
         await asyncio.sleep(1)
 
 
@@ -268,7 +268,7 @@ def build_menu(cfg_mgr, cfg, wifi, hm, gui_mgr, ot_manager):
         ]),
         Menu("Device", [
             Action("View Log", lambda: gui_mgr.switch_mode("logview")),
-            Action("Reset Error limiter", error_manager.reset_error_rate_limiter),
+            Action("Reset Error limiter", logger.reset_error_rate_limiter),
             Action("Reboot Device", reset),
             Action("Save & Reboot", save_and_reboot),
             Action("Factory defaults", lambda: factory_reset(gui_mgr.display, gui_mgr.led, cfg_mgr, hm)),
@@ -278,7 +278,7 @@ def build_menu(cfg_mgr, cfg, wifi, hm, gui_mgr, ot_manager):
     if DEVELOPMENT_MODE:
         items.append(Menu("Debug", [
             Action("Force wifi disconnect", wifi.disconnect),
-            Action("Fake Error", lambda: error_manager.error("Fake Error")),
+            Action("Fake Error", lambda: logger.error("Fake Error")),
         ]))
 
     return Menu("Main Menu", items)
@@ -302,33 +302,43 @@ def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid):
 # --------------------------------------------------------------------------- #
 
 def main():  # noqa: C901
-    # -------------------------------- Hardware & services ------------------- #
+    # -------------------------------- Hardware Initialisation ------------------- #
     try:
-        display, led, buttons = init_hardware()
+        logger.info(f"Initialising hardware")
+        
+        i2c = HWi2c()
+        mcp = HWMCP(i2c)
+        lcd = HWLCD(mcp)
+        display = DisplayController(lcd)
+        led = HWRGBLed(mcp)
+        buttons = HWButtons(mcp)
+        ot_uart = HWUART()
+        ot_controller = OpenThermController(ot_uart)
     except Exception as e:  # noqa: BLE001
         handle_fatal_error("Hardware", None, None, str(e))
         return
 
-    try:
-        cfg_mgr, cfg = load_config()
-        error_manager.info(f"DEBUG: {DEBUG}")
+    cfg_mgr, cfg = load_config()
+
+    # -------------------------------- Services Initialisation ------------------- #
+    try:  
+        logger.info(f"Initialising services")
         wifi = WiFiManager(cfg["ssid"], cfg["wifi_pass"], unique_hardware_name()[:15])
         hm = HomematicDataService(
             f"http://{cfg['ccu_ip']}/api/homematic.cgi",
             cfg["ccu_user"], cfg["ccu_pass"], cfg["valve_type"],
         )
-        ot_controller = OpenThermController(error_manager)
-        ot_manager = OpenThermManager(ot_controller, error_manager)
 
-        base = cfg["mqtt_base_topic"]
-
+        ot_manager = OpenThermManager(ot_controller)
+        gui = GUIManager(display, buttons)
     except Exception as e:  # noqa: BLE001
+        logger.error(f"Service Initialisation failed: {e}")
         handle_fatal_error("ServiceInit", display, led, str(e))
         return
 
     # -------------------------------- GUI ----------------------------------- #
     try:
-        gui = GUIManager(display, buttons)
+        
         # Build menu with the new OpenTherm manager
         root_menu = build_menu(cfg_mgr, cfg, wifi, hm, gui, ot_manager)
         gui.add_mode("navigation", NavigationMode(root_menu))
@@ -372,9 +382,9 @@ def main():  # noqa: C901
     schedule_tasks(loop, wifi=wifi, hm=hm, led=led, ot_manager=ot_manager, hid=buttons)
 
     try:
-        error_manager.info("Starting OpenTherm Manager...")
+        logger.info("Starting OpenTherm Manager...")
         loop.run_until_complete(ot_manager.start())
-        error_manager.info("OpenTherm Manager started. Setting initial state from config...")
+        logger.info("OpenTherm Manager started. Setting initial state from config...")
 
         # Set initial state using manager methods after start()
         # These methods launch background tasks internally if needed
@@ -395,7 +405,7 @@ def main():  # noqa: C901
              initial_cs = cfg.get("ot_manual_heating_setpoint", 45.0) # Default to 45 if not in config
              ot_manager.take_control(initial_setpoint=initial_cs)
 
-        error_manager.info("Initial state set commands issued.")
+        logger.info("Initial state set commands issued.")
 
     except Exception as e:
         handle_fatal_error("ManagerStart", display, led, str(e))
@@ -404,13 +414,13 @@ def main():  # noqa: C901
     try:
         loop.run_forever()
     except KeyboardInterrupt:
-        error_manager.error("KeyboardInterrupt  shutdown")
+        logger.error("KeyboardInterrupt  shutdown")
     finally:
         display.clear()
-        error_manager.info("Stopping OpenTherm Manager...")
+        logger.info("Stopping OpenTherm Manager...")
         loop = asyncio.get_event_loop()
         loop.run_until_complete(ot_manager.stop())
-        error_manager.info("OpenTherm Manager stopped.")
+        logger.info("OpenTherm Manager stopped.")
         led.direct_send_color("red")
         asyncio.new_event_loop()
 

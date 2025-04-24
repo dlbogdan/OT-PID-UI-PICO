@@ -11,7 +11,6 @@ from managers.manager_logger import Logger # Import the class
 
 # Instantiate to access the global error manager instance
 error_manager = Logger()
-DEBUG = error_manager.get_level()
 
 # --- End Import ---
 
@@ -132,7 +131,7 @@ class FloatEditor(Editor):
             action_occurred = False
 
         # --- Debugging Float Edit ---
-        if action_occurred and DEBUG >= 2:
+        if action_occurred:
             error_manager.debug(f"FloatEditor.handle - End - editing_value='{self.field.editing_value}'")
         # --- End Debugging ---
 

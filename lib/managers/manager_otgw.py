@@ -11,31 +11,32 @@ CMD_STATUS_TIMEOUT = "timeout"
 CMD_STATUS_ERROR = "error"
 CMD_STATUS_VALIDATION_ERROR = "validation_error"
 
+logger = Logger()
+
 class OpenThermManager:
     """
     Manages interaction with OpenThermController, providing a non-blocking
     interface for commands and tracking their execution status.
     """
-    def __init__(self, controller: OpenThermController, error_manager: Logger):
+    def __init__(self, controller: OpenThermController):
         self.controller = controller
-        self.error_manager = error_manager
         # Stores the state of the last issued command for each type
         # Key: command code (e.g., "CS", "SW"), Value: dict
         self._command_states = {}
 
     async def start(self):
         """Starts the underlying controller and waits briefly for UART setup."""
-        self.error_manager.info("Manager starting controller...")
+        logger.info("Manager starting controller...")
         await self.controller.start()
         # Allow some time for UART connection after controller tasks start
         await uasyncio.sleep(2)
-        self.error_manager.info("Manager finished starting controller.")
+        logger.info("Manager finished starting controller.")
 
     async def stop(self):
         """Stops the underlying controller."""
-        self.error_manager.info("Manager stopping controller...")
+        logger.info("Manager stopping controller...")
         await self.controller.stop()
-        self.error_manager.info("Manager finished stopping controller.")
+        logger.info("Manager finished stopping controller.")
 
     # --- Internal Task Execution ---
     async def _execute_command_task(self, cmd_code: str, controller_method, *args):
@@ -65,15 +66,15 @@ class OpenThermManager:
                          self._update_command_state(cmd_code, CMD_STATUS_ERROR, result=response_data, error_code=status_code)
                 else:
                     # Unknown 2-element tuple format
-                    self.error_manager.warning(f"Command {cmd_code} controller method returned unexpected 2-tuple format: {result}. Assuming error.")
+                    logger.warning(f"Command {cmd_code} controller method returned unexpected 2-tuple format: {result}. Assuming error.")
                     self._update_command_state(cmd_code, CMD_STATUS_ERROR, result=repr(result), error_code=OTGW_RESPONSE_UNKNOWN)
             else:
                  # Assume other return types indicate an unexpected issue or simple success
-                 self.error_manager.warning(f"Command {cmd_code} controller method returned unexpected type: {type(result)}. Assuming success.")
+                 logger.warning(f"Command {cmd_code} controller method returned unexpected type: {type(result)}. Assuming success.")
                  self._update_command_state(cmd_code, CMD_STATUS_SUCCESS, result=repr(result), error_code=OTGW_RESPONSE_OK)
 
         except Exception as e:
-            self.error_manager.error(f"Exception during command task {cmd_code}: {e}")
+            logger.error(f"Exception during command task {cmd_code}: {e}")
             self._update_command_state(cmd_code, CMD_STATUS_ERROR, result=str(e), error_code=OTGW_RESPONSE_UNKNOWN)
 
     def _update_command_state(self, cmd_code: str, status, result=None, error_code=None):
@@ -84,13 +85,13 @@ class OpenThermManager:
             "error_code": error_code, # OTGW_RESPONSE_... code
             "last_update": time.time()
         }
-        self.error_manager.info(f"Command {cmd_code} state updated: {status}") # Optional logging
+        logger.info(f"Command {cmd_code} state updated: {status}") # Optional logging
 
     def _launch_command(self, cmd_code: str, controller_method, *args) -> bool:
         """Checks if command is pending, updates state, and launches task."""
         # Basic check: Don't launch if already pending (could be made more robust)
         if self._command_states.get(cmd_code, {}).get("status") == CMD_STATUS_PENDING:
-            self.error_manager.warning(f"Command {cmd_code} is already pending. Ignoring new request.")
+            logger.warning(f"Command {cmd_code} is already pending. Ignoring new request.")
             return False
 
         self._update_command_state(cmd_code, CMD_STATUS_PENDING)
@@ -107,7 +108,7 @@ class OpenThermManager:
     def take_control(self, initial_setpoint=10.0):
         # Refactored to use _launch_command for non-blocking execution
         # Uses "TCtrl" as the command code for tracking.
-        self.error_manager.info(f"Launching take_control task (CS={initial_setpoint})...")
+        logger.info(f"Launching take_control task (CS={initial_setpoint})...")
         return self._launch_command("TCtrl", self.controller.take_control, initial_setpoint)
 
     def relinquish_control(self):

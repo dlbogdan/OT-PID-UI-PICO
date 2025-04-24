@@ -4,6 +4,7 @@ import time
 import hardware_config as cfg
 from managers.manager_logger import Logger # Assuming ErrorManager is in lib
 
+logger = Logger()
 # OTGW Response Codes
 OTGW_RESPONSE_OK = 0
 OTGW_RESPONSE_NG = 1 # No Good (Unknown command)
@@ -60,20 +61,12 @@ OT_FAULT_FLAGS_LB = {
 KEEP_ALIVE_INTERVAL = 50 # As per doc, commands like CS > 8 must be resent every minute
 BOILER_TIMEOUT_S = 60 # Seconds without a boiler message to be considered disconnected
 
-class OpenThermController:
+class OpenThermController():
     """
     Asynchronous controller for an OpenTherm Gateway (OTGW) via UART.
     """
-    def __init__(self, error_manager: Logger):
-        self.error_manager = error_manager
-        self.uart = UART(
-            cfg.OT_UART_ID,
-            baudrate=cfg.OT_UART_BAUDRATE,
-            tx=Pin(cfg.OT_UART_TX_PIN),
-            rx=Pin(cfg.OT_UART_RX_PIN),
-            timeout=10, # Short timeout for readline
-            timeout_char=10
-        )
+    def __init__(self, uart:UART):
+        self.uart = uart   
         self.stream = uasyncio.StreamReader(self.uart)
         self.writer = uasyncio.StreamWriter(self.uart, {})
 
@@ -97,11 +90,11 @@ class OpenThermController:
         self._thermostat_connected = None # True, False, or None if status unknown
         # --- End new state variables ---
 
-        self.error_manager.info("OpenThermController initialized.")
+        logger.info("OpenThermController initialized.")
 
     async def _uart_reader(self):
         """Task to continuously read and parse lines from OTGW."""
-        self.error_manager.info("OTGW UART reader task started.")
+        logger.info("OTGW UART reader task started.")
         READ_TIMEOUT_S = 5 # Seconds to wait for a line before assuming timeout
         while True:
             line = "" # Ensure line is defined in case of early exit
@@ -120,7 +113,7 @@ class OpenThermController:
                 if not line: # or len(line) == 0
                     continue
 
-                self.error_manager.info(f"OTGW RX: {line}") # DEBUG (Keep this standard log)
+                logger.info(f"OTGW RX: {line}") # DEBUG (Keep this standard log)
 
                 # --- Message Parsing ---
                 # Check for command response first (XX: Data)
@@ -128,12 +121,12 @@ class OpenThermController:
                 if len(parts) == 2 and len(parts[0]) == 2 and parts[0].isupper():
                     cmd_code = parts[0]
                     response_data = parts[1].strip()
-                    self.error_manager.info(f"Recognized command response for {cmd_code}: {response_data}")
+                    logger.info(f"Recognized command response for {cmd_code}: {response_data}")
                     self._last_responses[cmd_code] = response_data
                     if cmd_code in self._response_events:
                         self._response_events[cmd_code].set() # Signal waiting command
                     else:
-                        self.error_manager.warning(f"Received unsolicited/unexpected response: {line}")
+                        logger.warning(f"Received unsolicited/unexpected response: {line}")
 
                 # Check for specific informational messages using 'in' to handle prepended garbage
                 elif "OpenTherm Gateway " in line:
@@ -141,15 +134,15 @@ class OpenThermController:
                     try:
                         version_part = line.split("OpenTherm Gateway ")[-1]
                         self._gateway_version = version_part.strip()
-                        self.error_manager.info(f"Detected OTGW Version: {self._gateway_version} (from line: '{line}')")
+                        logger.info(f"Detected OTGW Version: {self._gateway_version} (from line: '{line}')")
                     except Exception:
-                        self.error_manager.warning(f"Found 'OpenTherm Gateway ' but failed to extract version from: '{line}'")
+                        logger.warning(f"Found 'OpenTherm Gateway ' but failed to extract version from: '{line}'")
                 elif "Thermostat disconnected" in line:
                     self._thermostat_connected = False
-                    self.error_manager.warning(f"Thermostat reported disconnected (from line: '{line}')")
+                    logger.warning(f"Thermostat reported disconnected (from line: '{line}')")
                 elif "Thermostat connected" in line: # Anticipate this message
                     self._thermostat_connected = True
-                    self.error_manager.info(f"Thermostat reported connected (from line: '{line}')")
+                    logger.info(f"Thermostat reported connected (from line: '{line}')")
 
                 # Check for standard status/error message (SXXXXXXXX or EXX)
                 elif len(line) > 1 and line[0] in ('T', 'B', 'R', 'A', 'E'):
@@ -165,26 +158,26 @@ class OpenThermController:
                              self._parse_and_update_status(msg_source, msg_type_raw, data_id, val_hb, val_lb)
                          except ValueError:
                              # Log the specific error here for clarity
-                             self.error_manager.warning(f"Could not parse OTGW hex status message: {line}")
+                             logger.warning(f"Could not parse OTGW hex status message: {line}")
                     # OTGW Internal Error (e.g., E01)
                     elif msg_source == 'E':
-                         self.error_manager.error(f"OTGW reported error: {line}")
+                         logger.error(f"OTGW reported error: {line}")
                     # Other malformed T/B/R/A/E message?
                     else:
                          # This branch now correctly catches things like "Thermostat disconnected" if the elif above failed
-                         self.error_manager.warning(f"Received unparseable OTGW status/error line (Source={msg_source}): {line}")
+                         logger.warning(f"Received unparseable OTGW status/error line (Source={msg_source}): {line}")
 
                 # If it's none of the above known formats
                 else:
                     # Only log as unknown if it wasn't handled
-                    self.error_manager.warning(f"Received unknown format line from OTGW: '{line}'")
+                    logger.warning(f"Received unknown format line from OTGW: '{line}'")
 
             except uasyncio.TimeoutError:
-                 self.error_manager.warning(f"Timeout waiting for line from OTGW (timeout={READ_TIMEOUT_S}s).")
+                 logger.warning(f"Timeout waiting for line from OTGW (timeout={READ_TIMEOUT_S}s).")
                  continue
             except Exception as e:
                 # Log the line that caused the error, if available
-                self.error_manager.error(f"Error in OTGW UART reader processing line '{line}': {e}")
+                logger.error(f"Error in OTGW UART reader processing line '{line}': {e}")
                 # Consider more robust error handling, maybe reset UART?
                 await uasyncio.sleep(5) # Avoid tight loop on persistent error
 
@@ -207,7 +200,7 @@ class OpenThermController:
                     if source == 'B' and current_fault_state is not None:
                         # Trigger PM=5 request if the fault state changed (0->1 or 1->0)
                         if current_fault_state != self._last_fault_present_state:
-                             self.error_manager.info(
+                             logger.info(
                                  f"Fault Indication changed from {self._last_fault_present_state} to {current_fault_state} (Boiler). Requesting ID 5.")
                              # Run request in background, don't block parser
                              uasyncio.create_task(self.request_priority_message(5))
@@ -266,7 +259,7 @@ class OpenThermController:
                 self._last_boiler_message_time = self._status_data[data_id]['timestamp']
 
         except Exception as e:
-            self.error_manager.error(f"Error parsing Data ID {data_id} (HB:{val_hb}, LB:{val_lb}): {e}")
+            logger.error(f"Error parsing Data ID {data_id} (HB:{val_hb}, LB:{val_lb}): {e}")
             # Store raw data even if parsing fails
             self._status_data[data_id] = {
                 'source': source,
@@ -281,7 +274,7 @@ class OpenThermController:
 
     async def _keep_alive(self):
         """Task to periodically send commands to maintain control if needed."""
-        self.error_manager.info("OTGW keep-alive task started.")
+        logger.info("OTGW keep-alive task started.")
         while True:
             await uasyncio.sleep(KEEP_ALIVE_INTERVAL)
             if self._is_controller_active:
@@ -289,13 +282,13 @@ class OpenThermController:
                 resend_needed = False
                 # Check if CS override needs periodic refresh
                 if self._control_setpoint_override >= 8.0:
-                     self.error_manager.info("Keep-alive: Resending CS command.")
+                     logger.info("Keep-alive: Resending CS command.")
                      await self._send_command("CS", self._control_setpoint_override, timeout=5)
                      resend_needed = True
 
                 # Check if C2 override needs periodic refresh
                 if self._control_setpoint2_override >= 8.0:
-                    self.error_manager.info("Keep-alive: Resending C2 command.")
+                    logger.info("Keep-alive: Resending C2 command.")
                     await self._send_command("C2", self._control_setpoint2_override, timeout=5)
                     resend_needed = True
 
@@ -305,13 +298,13 @@ class OpenThermController:
     async def _send_command(self, cmd_code, value, timeout=2):
         """Sends a command and waits for a specific response."""
         if len(cmd_code) != 2 or not cmd_code.isupper():
-            self.error_manager.error(f"Invalid command code format: {cmd_code}")
+            logger.error(f"Invalid command code format: {cmd_code}")
             return OTGW_RESPONSE_SE, None
 
         async with self._command_lock:
             # Use only carriage return as terminator, per OTGW docs
             cmd_str = f"{cmd_code}={value}\r"
-            self.error_manager.info(f"OTGW TX: {cmd_str.strip()}")
+            logger.info(f"OTGW TX: {cmd_str.strip()}")
 
             # Prepare for response
             response_event = uasyncio.Event()
@@ -336,10 +329,10 @@ class OpenThermController:
                 return OTGW_RESPONSE_OK, response_data
 
             except uasyncio.TimeoutError:
-                self.error_manager.warning(f"Timeout waiting for response to command: {cmd_code}")
+                logger.warning(f"Timeout waiting for response to command: {cmd_code}")
                 return OTGW_RESPONSE_TIMEOUT, None
             except Exception as e:
-                self.error_manager.error(f"Error sending command {cmd_code}: {e}")
+                logger.error(f"Error sending command {cmd_code}: {e}")
                 return OTGW_RESPONSE_UNKNOWN, None
             finally:
                 # Clean up the event for this specific command instance
@@ -351,15 +344,15 @@ class OpenThermController:
         """Starts the background reader and keep-alive tasks."""
         if self._reader_task is None:
             self._reader_task = uasyncio.create_task(self._uart_reader())
-            self.error_manager.info("Scheduled OTGW UART reader task.")
+            logger.info("Scheduled OTGW UART reader task.")
         else:
-            self.error_manager.warning("OTGW reader task already started.")
+            logger.warning("OTGW reader task already started.")
 
         if self._keep_alive_task is None:
              self._keep_alive_task = uasyncio.create_task(self._keep_alive())
-             self.error_manager.info("Scheduled OTGW keep-alive task.")
+             logger.info("Scheduled OTGW keep-alive task.")
         else:
-             self.error_manager.warning("OTGW keep-alive task already started.")
+             logger.warning("OTGW keep-alive task already started.")
 
 
     async def stop(self):
@@ -371,7 +364,7 @@ class OpenThermController:
             except uasyncio.CancelledError:
                 pass
             self._reader_task = None
-            self.error_manager.info("OTGW UART reader task stopped.")
+            logger.info("OTGW UART reader task stopped.")
 
         if self._keep_alive_task:
              self._keep_alive_task.cancel()
@@ -380,7 +373,7 @@ class OpenThermController:
              except uasyncio.CancelledError:
                  pass
              self._keep_alive_task = None
-             self.error_manager.info("OTGW keep-alive task stopped.")
+             logger.info("OTGW keep-alive task stopped.")
 
         # Close UART? Maybe not, allow restarting
         # await self.writer.aclose()
@@ -394,25 +387,25 @@ class OpenThermController:
         Returns tuple (success: bool, message: str).
         """
         if initial_setpoint < 0:
-             self.error_manager.warning("Initial setpoint must be >= 0. Using 10.0.")
+             logger.warning("Initial setpoint must be >= 0. Using 10.0.")
              initial_setpoint = 10.0
 
-        self.error_manager.info(f"Attempting to take control with CS={initial_setpoint}...")
+        logger.info(f"Attempting to take control with CS={initial_setpoint}...")
         status_cs, resp_cs = await self._send_command("CS", initial_setpoint)
         if status_cs != OTGW_RESPONSE_OK:
             msg = f"Failed to set initial CS (Status: {status_cs}, Resp: {resp_cs})"
-            self.error_manager.error(msg)
+            logger.error(msg)
             return False, msg
 
         status_ch, resp_ch = await self._send_command("CH", 1)
         if status_ch != OTGW_RESPONSE_OK:
             msg = f"Failed to enable CH=1 (Status: {status_ch}, Resp: {resp_ch})"
-            self.error_manager.error(msg)
+            logger.error(msg)
             # Still considered partial success if CS was set?
             # Or should we return False here too? For simplicity, let's proceed.
             # To rollback: await self.relinquish_control()
 
-        self.error_manager.info("Successfully took control (CS set, CH enabled).")
+        logger.info("Successfully took control (CS set, CH enabled).")
         self._is_controller_active = True
         self._control_setpoint_override = initial_setpoint
         self._last_keep_alive_time = time.time()
@@ -420,15 +413,15 @@ class OpenThermController:
 
     async def relinquish_control(self):
         """Gives control back to thermostat (CS=0). Returns (status_code, response_data)."""
-        self.error_manager.info("Attempting to relinquish control (CS=0)...")
+        logger.info("Attempting to relinquish control (CS=0)...")
         status_code, response_data = await self._send_command("CS", 0)
         if status_code == OTGW_RESPONSE_OK:
-            self.error_manager.info("Successfully relinquished control (CS=0 sent).")
+            logger.info("Successfully relinquished control (CS=0 sent).")
             self._is_controller_active = False
             self._control_setpoint_override = 0.0
             self._control_setpoint2_override = 0.0
         else:
-            self.error_manager.error(f"Failed to set CS=0 (Status: {status_code}, Resp: {response_data}). May still be controlling.")
+            logger.error(f"Failed to set CS=0 (Status: {status_code}, Resp: {response_data}). May still be controlling.")
 
         return status_code, response_data
 
@@ -436,10 +429,10 @@ class OpenThermController:
         """Sets CS. Returns (status_code, response_data)."""
         if not self._is_controller_active:
             # Return a specific code or raise an exception? For now, use custom code.
-            self.error_manager.warning("Cannot set CS. Controller not active.")
+            logger.warning("Cannot set CS. Controller not active.")
             return OTGW_RESPONSE_UNKNOWN + 100, "Controller not active" # Custom code
         if temp < 0 or temp > 90:
-            self.error_manager.warning(f"Control Setpoint {temp} out of plausible range (0-90).")
+            logger.warning(f"Control Setpoint {temp} out of plausible range (0-90).")
             # Allow sending anyway, boiler/gateway might clip it.
 
         status_code, response_data = await self._send_command("CS", temp)
@@ -450,13 +443,13 @@ class OpenThermController:
     async def set_dhw_setpoint(self, temp):
         """Sets SW. Returns (status_code, response_data)."""
         if temp < 0 or temp > 80:
-            self.error_manager.warning(f"DHW Setpoint {temp} out of plausible range (0-80).")
+            logger.warning(f"DHW Setpoint {temp} out of plausible range (0-80).")
         return await self._send_command("SW", temp)
 
     async def set_max_modulation(self, percentage):
          """Sets MM. Returns (status_code, response_data)."""
          if percentage < 0 or percentage > 100:
-             self.error_manager.warning(f"Max Modulation {percentage} out of range (0-100).")
+             logger.warning(f"Max Modulation {percentage} out of range (0-100).")
              # Allow sending anyway?
              # return OTGW_RESPONSE_OR, "Percentage out of range"
          return await self._send_command("MM", percentage)
@@ -464,7 +457,7 @@ class OpenThermController:
     async def set_central_heating(self, enabled: bool):
         """Sets CH. Returns (status_code, response_data)."""
         if not self._is_controller_active:
-            self.error_manager.warning("Cannot set CH. Controller not active.")
+            logger.warning("Cannot set CH. Controller not active.")
             return OTGW_RESPONSE_UNKNOWN + 100, "Controller not active" # Custom code
         state = 1 if enabled else 0
         return await self._send_command("CH", state)
@@ -473,16 +466,16 @@ class OpenThermController:
     async def set_max_ch_setpoint(self, temp):
         """Sets SH. Returns (status_code, response_data)."""
         if temp < 0 or temp > 90:
-            self.error_manager.warning(f"Max CH Setpoint {temp} out of plausible range (0-90).")
+            logger.warning(f"Max CH Setpoint {temp} out of plausible range (0-90).")
         return await self._send_command("SH", temp)
 
     async def set_control_setpoint_2(self, temp):
         """Sets C2. Returns (status_code, response_data)."""
         if not self._is_controller_active:
-            self.error_manager.warning("Cannot set C2. Controller not active.")
+            logger.warning("Cannot set C2. Controller not active.")
             return OTGW_RESPONSE_UNKNOWN + 100, "Controller not active"
         if temp < 0 or temp > 90:
-            self.error_manager.warning(f"Control Setpoint 2 {temp} out of plausible range (0-90).")
+            logger.warning(f"Control Setpoint 2 {temp} out of plausible range (0-90).")
 
         status_code, response_data = await self._send_command("C2", temp)
         if status_code == OTGW_RESPONSE_OK:
@@ -492,7 +485,7 @@ class OpenThermController:
     async def set_central_heating_2(self, enabled: bool):
         """Sets H2. Returns (status_code, response_data)."""
         if not self._is_controller_active:
-            self.error_manager.warning("Cannot set H2. Controller not active.")
+            logger.warning("Cannot set H2. Controller not active.")
             return OTGW_RESPONSE_UNKNOWN + 100, "Controller not active"
         state = 1 if enabled else 0
         return await self._send_command("H2", state)
@@ -500,7 +493,7 @@ class OpenThermController:
     async def set_ventilation_setpoint(self, percentage):
         """Sets VS. Returns (status_code, response_data)."""
         if percentage < 0 or percentage > 100:
-             self.error_manager.warning(f"Ventilation Setpoint {percentage} out of range (0-100).")
+             logger.warning(f"Ventilation Setpoint {percentage} out of range (0-100).")
              # Allow sending anyway?
              # return OTGW_RESPONSE_OR, "Percentage out of range"
         return await self._send_command("VS", percentage)
@@ -509,14 +502,14 @@ class OpenThermController:
         """Sets RS. Returns (status_code, response_data)."""
         valid_counters = ["HBS", "HBH", "HPS", "HPH", "WBS", "WBH", "WPS", "WPH"]
         if counter_name not in valid_counters:
-            self.error_manager.warning(f"Invalid counter name for RS command: {counter_name}")
+            logger.warning(f"Invalid counter name for RS command: {counter_name}")
             return OTGW_RESPONSE_BV, "Invalid counter name"
         return await self._send_command("RS", counter_name)
 
     async def request_priority_message(self, data_id):
         """Sets PM. Returns (status_code, response_data)."""
         if not isinstance(data_id, int) or not (0 <= data_id <= 255):
-            self.error_manager.warning(f"Invalid Data ID for PM command: {data_id}")
+            logger.warning(f"Invalid Data ID for PM command: {data_id}")
             return OTGW_RESPONSE_BV, "Invalid Data ID"
         return await self._send_command("PM", data_id)
 
@@ -525,10 +518,10 @@ class OpenThermController:
     async def set_hot_water_mode(self, state):
          """Sets HW. Returns (status_code, response_data)."""
          if not isinstance(state, (int, str)) or (isinstance(state, str) and len(state) != 1):
-             self.error_manager.warning(f"Invalid HW state: {state}. Use 0, 1, 'P', or other single char.")
+             logger.warning(f"Invalid HW state: {state}. Use 0, 1, 'P', or other single char.")
              return OTGW_RESPONSE_BV, "Invalid state value"
          if isinstance(state, int) and state not in (0, 1):
-             self.error_manager.warning(f"Invalid HW state: {state}. Use 0 or 1 for integer state.")
+             logger.warning(f"Invalid HW state: {state}. Use 0 or 1 for integer state.")
              return OTGW_RESPONSE_BV, "Invalid state value"
          return await self._send_command("HW", state)
 
@@ -536,24 +529,24 @@ class OpenThermController:
     async def set_temporary_room_setpoint_override(self, temp):
         """Sets TT. Returns (status_code, response_data)."""
         if not isinstance(temp, (float, int)) or not (0.0 <= temp <= 30.0):
-            self.error_manager.warning(f"Invalid temp for TT command (0.0-30.0): {temp}")
+            logger.warning(f"Invalid temp for TT command (0.0-30.0): {temp}")
             return OTGW_RESPONSE_BV, "Temperature out of range"
         return await self._send_command("TT", f"{temp:.2f}")
 
     async def set_constant_room_setpoint_override(self, temp):
         """Sets TC. Returns (status_code, response_data)."""
         if not isinstance(temp, (float, int)) or not (0.0 <= temp <= 30.0):
-            self.error_manager.warning(f"Invalid temp for TC command (0.0-30.0): {temp}")
+            logger.warning(f"Invalid temp for TC command (0.0-30.0): {temp}")
             return OTGW_RESPONSE_BV, "Temperature out of range"
         return await self._send_command("TC", f"{temp:.2f}")
 
     async def set_thermostat_clock(self, time_str, day_int):
         """Sets SC. Returns (status_code, response_data)."""
         if not isinstance(day_int, int) or not (1 <= day_int <= 7):
-            self.error_manager.warning(f"Invalid day for SC command (1-7): {day_int}")
+            logger.warning(f"Invalid day for SC command (1-7): {day_int}")
             return OTGW_RESPONSE_BV, "Invalid day"
         if not isinstance(time_str, str) or len(time_str) != 5 or time_str[2] != ':':
-             self.error_manager.warning(f"Invalid time format for SC command (HH:MM): {time_str}")
+             logger.warning(f"Invalid time format for SC command (HH:MM): {time_str}")
              return OTGW_RESPONSE_BV, "Invalid time format"
         # Basic HH:MM validation
         try:
@@ -561,7 +554,7 @@ class OpenThermController:
             if not (0 <= h <= 23 and 0 <= m <= 59):
                  raise ValueError("Hour or minute out of range")
         except ValueError as e:
-            self.error_manager.warning(f"Invalid time value for SC command: {e}")
+            logger.warning(f"Invalid time value for SC command: {e}")
             return OTGW_RESPONSE_BV, "Invalid time value"
 
         value_str = f"{time_str}/{day_int}"
@@ -697,7 +690,7 @@ class OpenThermController:
         if self._last_boiler_message_time == 0:
             # Haven't seen any boiler message yet since script start
             # We could maybe infer based on recent T messages, but simple timeout is clearer
-            self.error_manager.warning("Boiler status unknown: No messages received yet.")
+            logger.warning("Boiler status unknown: No messages received yet.")
             return False
         return (time.time() - self._last_boiler_message_time) < BOILER_TIMEOUT_S
 

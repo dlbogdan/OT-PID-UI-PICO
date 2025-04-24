@@ -1,9 +1,9 @@
 #driver_HD44780.py - Driver for HD44780 LCD using any Pin-compatible interface
 import utime
 from drivers.driver_lcd import LCD
+from managers.manager_logger import Logger
 
-# --- Custom Character Definitions ---
-# (CUSTOM_CHARS list as defined above)
+logger = Logger()
 
 # --- CGRAM/DDRAM Constants ---
 LCD_SETCGRAMADDR = 0x40
@@ -91,9 +91,9 @@ class LCD1602(LCD):
             pattern_bytes (list[int]): A list of 8 bytes representing the 5x8 pattern.
         """
         if not (0 <= char_code <= 7):
-            print("Error: Custom character code must be 0-7."); return
+            logger.error("Custom character code must be 0-7."); return
         if len(pattern_bytes) != 8:
-            print("Error: Custom character pattern must be 8 bytes."); return
+            logger.error("Custom character pattern must be 8 bytes."); return
 
         cgram_addr = LCD_SETCGRAMADDR | (char_code << 3)
         self._send(cgram_addr, 0) # Set CGRAM address

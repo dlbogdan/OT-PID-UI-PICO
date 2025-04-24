@@ -11,8 +11,8 @@ import asyncio # <<< ADDSYNCIO IMPORT
 
 from managers.manager_logger import Logger
 
-error_manager = Logger()
-DEBUG = error_manager.get_level()
+logger = Logger()
+
 
 try:
     import ssl as tls # Standard library name
@@ -60,7 +60,7 @@ class JsonRpcClient:
         if self.is_https and tls is None:
              raise RuntimeError("HTTPS requested but no SSL/TLS module found.")
 
-        print(f"AsyncJsonRpcClient initialized for: {self.base_url} (Host: {self.host}, Port: {self.port}, HTTPS: {self.is_https})")
+        logger.info(f"AsyncJsonRpcClient initialized for: {self.base_url} (Host: {self.host}, Port: {self.port}, HTTPS: {self.is_https})")
 
 
     # --- Make _urlopen ASYNCHRONOUS ---
@@ -69,7 +69,7 @@ class JsonRpcClient:
         reader = None
         writer = None
         start_urlopen = time.ticks_ms()
-        error_manager.info(f"Async _urlopen: Starting request to {self.host}:{self.port}{path}{data}")
+        logger.info(f"Async _urlopen: Starting request to {self.host}:{self.port}{path}{data}")
 
         try:
             # --- Use asyncio streams ---
@@ -123,8 +123,8 @@ class JsonRpcClient:
             try:
                 status_line_bytes = await asyncio.wait_for(reader.readline(), timeout=self.timeout)
             except asyncio.TimeoutError:
-                 print("Async _urlopen Error: Timeout waiting for status line.")
-                 raise # Re-raise TimeoutError
+                logger.error("Async _urlopen Error: Timeout waiting for status line.")
+                raise # Re-raise TimeoutError
 
             if not status_line_bytes:
                 raise OSError("Server closed connection before sending status line.")
@@ -140,14 +140,14 @@ class JsonRpcClient:
                 try:
                     header_line_bytes = await asyncio.wait_for(reader.readline(), timeout=self.timeout)
                 except asyncio.TimeoutError:
-                    print("Async _urlopen Error: Timeout waiting for headers.")
+                    logger.error("Async _urlopen Error: Timeout waiting for headers.")
                     raise # Re-raise TimeoutError
                 if not header_line_bytes or header_line_bytes == b'\r\n':
                     break # End of headers
                 try:
                     key, value = header_line_bytes.decode().split(":", 1)
                     resp_headers[key.strip().lower()] = value.strip()
-                except ValueError: print(f"Warning: Malformed header line ignored: {header_line_bytes}")
+                except ValueError: logger.warning(f"Warning: Malformed header line ignored: {header_line_bytes}")
             
             gc.collect() # Optional: Collect garbage after reading headers
             # Read body
@@ -160,7 +160,7 @@ class JsonRpcClient:
                     try:
                         chunk = await asyncio.wait_for(reader.read(bytes_to_read), timeout=self.timeout)
                     except asyncio.TimeoutError:
-                        print("Async _urlopen Error: Timeout waiting for body chunk.")
+                        logger.error("Async _urlopen Error: Timeout waiting for body chunk.")
                         raise # Re-raise TimeoutError
                     if not chunk: raise OSError("Incomplete response (Content-Length mismatch - EOF)")
                     body += chunk
@@ -169,24 +169,24 @@ class JsonRpcClient:
                  # Simplified chunked reading - might need more robustness
                  while True:
                      try: chunk_size_line = await asyncio.wait_for(reader.readline(), timeout=self.timeout)
-                     except asyncio.TimeoutError: print("Timeout reading chunk size"); raise
+                     except asyncio.TimeoutError: logger.error("Timeout reading chunk size"); raise
                      try: chunk_size = int(chunk_size_line.strip(), 16)
                      except ValueError: raise ValueError(f"Invalid chunk size: {chunk_size_line}")
                      if chunk_size == 0:
                           try: await asyncio.wait_for(reader.readline(), timeout=self.timeout) # Read trailing CRLF
-                          except asyncio.TimeoutError: print("Timeout reading chunk trailer"); raise
+                          except asyncio.TimeoutError: logger.error("Timeout reading chunk trailer"); raise
                           break
                      chunk_data = b""
                      read_so_far = 0
                      while read_so_far < chunk_size:
                          bytes_to_read = min(4096, chunk_size - read_so_far)
                          try: chunk = await asyncio.wait_for(reader.read(bytes_to_read), timeout=self.timeout)
-                         except asyncio.TimeoutError: print("Timeout reading chunk data"); raise
+                         except asyncio.TimeoutError: logger.error("Timeout reading chunk data"); raise
                          if not chunk: raise OSError("Incomplete chunk data")
                          chunk_data += chunk
                          read_so_far += len(chunk)
                      try: await asyncio.wait_for(reader.readline(), timeout=self.timeout) # Read CRLF after chunk
-                     except asyncio.TimeoutError: print("Timeout reading chunk CRLF"); raise
+                     except asyncio.TimeoutError: logger.error("Timeout reading chunk CRLF"); raise
                      body += chunk_data
             else:
                 # Read until EOF (less reliable, use if no length/chunking)
@@ -194,18 +194,18 @@ class JsonRpcClient:
                     try:
                         chunk = await asyncio.wait_for(reader.read(1024), timeout=self.timeout)
                     except asyncio.TimeoutError:
-                        print("Async _urlopen Warning: Timeout during read-to-EOF, returning partial body.")
+                        logger.warning("Async _urlopen Warning: Timeout during read-to-EOF, returning partial body.")
                         break # Return what we have on timeout
                     if not chunk:
                         break # EOF
                     body += chunk
 
-            error_manager.info("Async _urlopen: Request finished successfully.")
+            logger.info("Async _urlopen: Request finished successfully.")
             return status_code, resp_headers, body.decode()
 
         # --- Error Handling ---
         except asyncio.TimeoutError:
-            print(f"AsyncJsonRpcClient Error: Request timed out after {self.timeout}s (overall or during specific read/write)")
+            logger.error(f"AsyncJsonRpcClient Error: Request timed out after {self.timeout}s (overall or during specific read/write)")
             return 504, {}, "Request Timeout"
         except OSError as e:
             # Handle specific connection errors etc.
@@ -219,14 +219,14 @@ class JsonRpcClient:
                 # errno.ENETUNREACH # Removed as may not be present
             )
             if errno_val in critical_errnos:
-                print(f"AsyncJsonRpcClient Error: Critical Network OSError: {e}")
+                logger.error(f"AsyncJsonRpcClient Error: Critical Network OSError: {e}")
                 raise NetworkError(e) # Raise specific exception
             else:
                 # For other OS errors, return a generic server error status
-                print(f"AsyncJsonRpcClient Warning: Non-critical OSError during urlopen: {e}")
+                logger.warning(f"AsyncJsonRpcClient Warning: Non-critical OSError during urlopen: {e}")
                 return 500, {}, f"Network Error: {e}"
         except Exception as e:
-            print(f"AsyncJsonRpcClient Error: Unexpected error during urlopen: {e}")
+            logger.error(f"AsyncJsonRpcClient Error: Unexpected error during urlopen: {e}")
             import sys
             sys.print_exception(e)
             return 500, {}, f"Internal Client Error: {e}"
@@ -238,7 +238,7 @@ class JsonRpcClient:
                 try:
                     await writer.wait_closed() # Wait for close to complete
                 except Exception as close_e:
-                    print(f"Async _urlopen: Error during writer.wait_closed: {close_e}") # Log error but continue
+                    logger.error(f"Async _urlopen: Error during writer.wait_closed: {close_e}") # Log error but continue
                 # print(f"Async _urlopen: Writer stream closed.") # Debug
             # Reader is implicitly closed when writer is closed for sockets in asyncio
             # print(f"Async _urlopen: Method finished in {time.ticks_diff(time.ticks_ms(), start_urlopen)} ms.") # Debug
@@ -257,7 +257,7 @@ class JsonRpcClient:
             payload["params"] = params
 
         payload_json = json.dumps(payload)
-        error_manager.info(f"Async RPC Request > Method: {jsonrpc_method}, ID: {id_val}")
+        logger.info(f"Async RPC Request > Method: {jsonrpc_method}, ID: {id_val}")
 
         attempt = 0
         while True:
@@ -269,28 +269,24 @@ class JsonRpcClient:
                 try:
                     response_data = json.loads(body)
                     if "error" in response_data and response_data["error"]:
-                        print(f"AsyncJsonRpcClient Error: Received JSON-RPC error: {response_data['error']}")
-                        error_manager.error(f"Async JsonRpcClient Error: Received JSON-RPC error: {response_data['error']}")
-                    error_manager.info(f"Async RPC Response < ID: {id_val}, Status: {status_code}")
+                        logger.error(f"Async JsonRpcClient Error: Received JSON-RPC error: {response_data['error']}")
+                    logger.info(f"Async RPC Response < ID: {id_val}, Status: {status_code}")
                     return response_data # Success or RPC-level error contained within
                 except ValueError:
-                    print(f"AsyncJsonRpcClient Error: Response status 200 but body is not valid JSON.")
-                    print(f"Response body sample: {body[:100]}") # Print sample
-                    error_manager.error(f"Async JsonRpcClient Error: Response status 200 but body is not valid JSON.")
+                    logger.error(f"Async JsonRpcClient Error: Response status 200 but body is not valid JSON.")
+                    logger.error(f"Response body sample: {body[:100]}") # Print sample
                 
                     # Treat as failure, potentially retry
             else:
-                print(f"AsyncJsonRpcClient Error: HTTP status {status_code}. Body: {body[:100]}")
-                error_manager.error(f"Async JsonRpcClient Error: HTTP status {status_code}.")
+                logger.error(f"Async JsonRpcClient Error: HTTP status {status_code}.")
                 # Decide if this status code warrants a retry (e.g., 5xx errors)
 
             # --- Retry Logic ---
             if attempt >= retries:
-                print(f"AsyncJsonRpcClient Error: Request failed after {attempt} attempts.")
-                error_manager.error(f"Async JsonRpcClient Error: Request failed after {attempt} attempts.")
+                logger.error(f"Async JsonRpcClient Error: Request failed after {attempt} attempts.")
                 return None # Max retries reached
 
             wait_time = backoff_factor * (2 ** (attempt - 1))
-            print(f"Retrying in {wait_time:.2f} seconds...")
+            logger.info(f"Retrying in {wait_time:.2f} seconds...")
             await asyncio.sleep(wait_time) # Use async sleep
             gc.collect()

@@ -82,6 +82,7 @@ from drivers.driver_rgbled import RGBLED
 from controllers.controller_HID import HIDController
 from machine import unique_id
 import binascii
+from machine import UART
 
 def unique_hardware_name():
     """Generate a unique name for the device."""
@@ -91,22 +92,22 @@ def unique_hardware_name():
     except Exception as e:
         return "OT-CTRL-GENERIC"
 
-def init_i2c():
+def HWi2c():
     """Initialize I2C bus and return the instance."""
     return I2C(I2C_ID, sda=Pin(I2C_SDA_PIN), scl=Pin(I2C_SCL_PIN))
 
-def init_mcp(i2c):
+def HWMCP(i2c):
     """Initialize MCP23017 I/O expander and return the instance."""
     return Portexpander(i2c, MCP_ADDRESS)
 
-def init_rgb_led(mcp):
+def HWRGBLed(mcp):
     """Initialize RGB LED pins and return the RGBLED instance."""
     led_red = McpPin(mcp, RGBLED_RED_PIN, McpPin.OUT)
     led_green = McpPin(mcp, RGBLED_GREEN_PIN, McpPin.OUT)
     led_blue = McpPin(mcp, RGBLED_BLUE_PIN, McpPin.OUT)
     return RGBLED(led_red, led_green, led_blue, initial_color="yellow")
 
-def init_lcd(mcp) -> LCD:
+def HWLCD(mcp) -> LCD:
     """Initialize LCD pins and return an LCD instance.
     
     Returns:
@@ -121,7 +122,7 @@ def init_lcd(mcp) -> LCD:
     lcd_d7 = McpPin(mcp, LCD_D7_PIN, McpPin.OUT)
     return LCD1602(lcd_rw, lcd_rs, lcd_en, lcd_d4, lcd_d5, lcd_d6, lcd_d7, cols=LCD_COLS, rows=LCD_ROWS)
 
-def init_buttons(mcp):
+def HWButtons(mcp):
     """Initialize button pins and return the HIDController instance."""
     button_left = McpPin(mcp, BUTTON_LEFT_PIN, McpPin.IN, McpPin.PULL_UP)
     button_up = McpPin(mcp, BUTTON_UP_PIN, McpPin.IN, McpPin.PULL_UP)
@@ -129,6 +130,10 @@ def init_buttons(mcp):
     button_right = McpPin(mcp, BUTTON_RIGHT_PIN, McpPin.IN, McpPin.PULL_UP)
     button_select = McpPin(mcp, BUTTON_SELECT_PIN, McpPin.IN, McpPin.PULL_UP)
     return HIDController(button_left, button_up, button_down, button_right, button_select)
+
+def HWUART():
+    """Initialize UART and return the instance."""
+    return UART(OT_UART_ID, baudrate=OT_UART_BAUDRATE, tx=Pin(OT_UART_TX_PIN), rx=Pin(OT_UART_RX_PIN), timeout=10, timeout_char=10)
 
 # def init_hardware():
 #     """Initialize all hardware components and return a dictionary with the instances."""

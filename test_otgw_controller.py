@@ -6,7 +6,7 @@ import select
 from controllers.controller_otgw import OpenThermController # Keep controller import for instantiation
 from managers.manager_otgw import OpenThermManager, CMD_STATUS_PENDING, CMD_STATUS_SUCCESS # Import Manager
 from managers.manager_logger import Logger
-
+from hardware_config import HWUART
 # Instantiate the Logger
 error_manager = Logger()
 
@@ -213,9 +213,9 @@ async def main():
     error_manager.info("Starting OTGW Controller Monitor Script...")
     error_mgr = Logger(debug_level=DEBUG_LEVEL)
     # Instantiate Controller first
-    controller = OpenThermController(error_mgr)
+    controller = OpenThermController(HWUART())
     # Instantiate Manager, passing the controller
-    manager = OpenThermManager(controller, error_mgr)
+    manager = OpenThermManager(controller)
 
     error_manager.info("Starting manager tasks...")
     # Start the manager, which starts the controller and handles delays
