@@ -3,8 +3,9 @@ import asyncio
 from services.service_async_http import JsonRpcClient, NetworkError
 import time
 import ujson
-from initialization import logger
+from managers.manager_logger import Logger
 
+logger = Logger()
 
 # --- Homematic CCU3 RPC Client ---
 class HomematicRPCClient:

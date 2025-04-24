@@ -64,7 +64,7 @@ def process_command(cmd, manager: OpenThermManager):
     if cmd == '1':
         error_manager.info("Attempting to take control (non-blocking)...")
         # Call the non-blocking manager method
-        launched = manager.take_control(initial_setpoint=40.0)
+        launched = manager.take_control()
         # The command now runs in the background. Check status with 'L' later.
         # manager.take_control(initial_setpoint=40.0)
         # TODO: Manager should ideally return True/False if task was launched - DONE

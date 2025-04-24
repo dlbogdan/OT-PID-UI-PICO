@@ -7,8 +7,9 @@ from machine import I2C, Pin
 import utime as time  # Use utime for MicroPython compatibility
 from controllers.controller_HID import ButtonObserver, ButtonEventType, ButtonName, ButtonEvent
 import uasyncio as asyncio # Add asyncio import
-from initialization import logger
+from managers.manager_logger import Logger
 
+logger = Logger()
 
 # --- End Import ---
 
@@ -807,7 +808,7 @@ class MonitoringMode(UIMode):
         try:
             while True:
                 await asyncio.sleep_ms(self.refresh_interval_ms)
-                logger.info("MonitoringMode Refresh Task: Tick - Rendering.")
+                logger.trace("MonitoringMode Refresh Task: Tick - Rendering.")
                 try:
                     # Check if we are still in monitoring mode before rendering
                     # This is a safety check, exit() should cancel the task.

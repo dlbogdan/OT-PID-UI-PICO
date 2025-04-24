@@ -1,7 +1,8 @@
 import time
 import network
-from initialization import logger
+from managers.manager_logger import Logger
 
+logger = Logger()
 
 # --- WiFi Management ---
 # class WiFiManager: ... (NO CHANGES NEEDED, connection check is non-blocking) ...
@@ -36,7 +37,7 @@ class WiFiManager:
                  logger.error("WiFiManager: No SSID configured, will remain disconnected.")
 
         except Exception as e:
-            logger.fatal("WiFiManager Error: Failed to initialize WLAN interface", e)
+            logger.fatal("WiFiManager Error: Failed to initialize WLAN interface", e, resetmachine=True)
             self._status = WiFiManager.STATUS_ERROR
 
     def _can_attempt_connect(self):

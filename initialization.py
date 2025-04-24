@@ -17,36 +17,34 @@ from gui import (
     Menu, FloatField, BoolField, Action, IPAddressField, TextField,
     MonitoringMode, Page, LogView,
 )
-from main import Kp, Ki, Kd, OUT, DEVELOPMENT_MODE
-
+from flags import DEVELOPMENT_MODE
 from managers.manager_logger import Logger
 
-from flags import DEBUG
-logger = Logger(DEBUG)
+logger = Logger()
 
 # --------------------------------------------------------------------------- #
 #  Fatal‑error handler
 # --------------------------------------------------------------------------- #
 
-def handle_fatal_error(err_type, display, led, msg, tb=None, development_mode=False):
-    """Logs fatal errors, updates display/LED, and reboots or halts."""
-    logger.fatal(err_type, msg, tb)
-    try:
-        if display:
-            display.show_message("FATAL ERROR", "REBOOTING..." if not development_mode else "ERROR")
-        if led:
-            led.direct_send_color("red")
-    except Exception as disp_exc:  # noqa: BLE001
-        logger.error(f"Display fail in fatal handler: {disp_exc}")
+# def handle_fatal_error(err_type, display, led, msg, development_mode=False):
+#     """Logs fatal errors, updates display/LED, and reboots or halts."""
+#     try:
+#         if display:
+#             display.show_message("FATAL ERROR", "REBOOTING..." if not development_mode else "ERROR")
+#         if led:
+#             led.direct_send_color("red")
+#     except Exception as disp_exc:  # noqa: BLE001
+#         logger.error(f"Display fail in fatal handler: {disp_exc}")
+#     logger.fatal(err_type, msg,resetmachine=not development_mode)
 
-    time.sleep(2)
-    if development_mode:
-        logger.error(f"[DEV] FATAL {err_type}: {msg}\n{tb}")
-        # Loop indefinitely in development mode to allow debugging
-        while True:
-            time.sleep(1)
-    else:
-        reset()
+#     time.sleep(2)
+#     if development_mode:
+#         logger.error(f"[DEV] FATAL {err_type}: {msg}")
+#         # Loop indefinitely in development mode to allow debugging
+#         while True:
+#             time.sleep(1)
+#     else:
+#         reset()
 
 
 # --------------------------------------------------------------------------- #
@@ -55,16 +53,23 @@ def handle_fatal_error(err_type, display, led, msg, tb=None, development_mode=Fa
 
 def initialize_hardware():
     """Initialise I²C bus, peripherals and OpenTherm driver."""
+    
     logger.info("Initialising hardware...")
+    
     i2c = HWi2c()
+    uart = HWUART()
     mcp = HWMCP(i2c)
     lcd = HWLCD(mcp)
     display = DisplayController(lcd)
     led = HWRGBLed(mcp)
     buttons = HWButtons(mcp)
+    ot_controller = OpenThermController(uart)
+    opentherm = OpenThermManager(ot_controller)
+
     logger.info("Hardware initialised.")
+    
     # Return all initialized hardware components
-    return display, led, buttons
+    return display, led, buttons, opentherm
 
 
 # --------------------------------------------------------------------------- #
@@ -207,8 +212,8 @@ def setup_gui(gui, cfg_mgr, cfg, wifi, hm, ot_manager):
     mon.add_page(Page(lambda: (f"Avg: {hm.avg_valve:.1f}%" if hm.is_ccu_connected() else "Valve Status"),
                        lambda: (f"Max: {hm.max_valve:.1f}% {hm.valve_devices}/{hm.reporting_valves}" if hm.is_ccu_connected() else "CCU Offline")))
     # Page 3: PID constants (Imported from main for now)
-    mon.add_page(Page(lambda: f"Kp: {Kp:.2f} Ki: {Ki:.2f}",
-                       lambda: f"Kd: {Kd:.2f} OUT: {OUT:.2f}"))
+    # mon.add_page(Page(lambda: f"Kp: {Kp:.2f} Ki: {Ki:.2f}",
+    #                    lambda: f"Kd: {Kd:.2f} OUT: {OUT:.2f}"))
     # Page 4: Setpoints (using manager getters)
     mon.add_page(Page(lambda: f"DHW SP: {ot_manager.get_dhw_setpoint()}",
                        lambda: f"Control SP: {ot_manager.get_control_setpoint()}"))
@@ -243,16 +248,7 @@ def initialize_services():
         f"http://{cfg['ccu_ip']}/api/homematic.cgi",
         cfg["ccu_user"], cfg["ccu_pass"], cfg["valve_type"]
     )
-    ot_uart = HWUART()
-    ot_controller = OpenThermController(ot_uart)
-    ot_manager = OpenThermManager(ot_controller)
-    # Note: GUIManager requires display and buttons, which are created in initialize_hardware
-    # We need to adjust the flow slightly: initialize_hardware first, then pass display/buttons here
-    # Or, GUIManager could be initialized later in setup_gui.
-    # Let's assume initialize_hardware runs first and we pass display/buttons.
 
     logger.info("Services initialised.")
     # Return managers, config, and services
-    return cfg_mgr, cfg, wifi, hm, ot_manager
-
-# --- More functions (initialize_services, setup_gui) will be added below --- 
+    return cfg_mgr, cfg, wifi, hm

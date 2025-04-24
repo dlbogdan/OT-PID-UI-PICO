@@ -2,8 +2,9 @@ import uasyncio
 from machine import UART, Pin
 import time
 import platform_spec as cfg
-from initialization import logger
+from managers.manager_logger import Logger
 
+logger = Logger()
 # OTGW Response Codes
 OTGW_RESPONSE_OK = 0
 OTGW_RESPONSE_NG = 1 # No Good (Unknown command)
@@ -15,6 +16,8 @@ OTGW_RESPONSE_NF = 6 # Not Found
 OTGW_RESPONSE_OE = 7 # Overrun Error
 OTGW_RESPONSE_TIMEOUT = 8
 OTGW_RESPONSE_UNKNOWN = 9
+
+DEFAULT_CONTROL_SETPOINT = 10.0 # Default setpoint if no override is set
 
 # --- OpenTherm Flag Definitions ---
 # Based on Protocol v2.2
@@ -112,7 +115,7 @@ class OpenThermController():
                 if not line: # or len(line) == 0
                     continue
 
-                logger.info(f"OTGW RX: {line}") # DEBUG (Keep this standard log)
+                logger.debug(f"OTGW RX: {line}") # DEBUG (Keep this standard log)
 
                 # --- Message Parsing ---
                 # Check for command response first (XX: Data)
@@ -380,14 +383,19 @@ class OpenThermController():
 
     # --- Control Methods ---
 
-    async def take_control(self, initial_setpoint=10.0):
+    async def take_control(self):
         """
         Takes control from the thermostat by setting CS and CH.
         Returns tuple (success: bool, message: str).
         """
-        if initial_setpoint < 0:
-             logger.warning("Initial setpoint must be >= 0. Using 10.0.")
-             initial_setpoint = 10.0
+
+        if self._control_setpoint_override > 0:
+            initial_setpoint = self._control_setpoint_override
+        else:
+            initial_setpoint = DEFAULT_CONTROL_SETPOINT
+        # if initial_setpoint < 0:
+        #      logger.warning("Initial setpoint must be >= 0. Using 10.0.")
+        #      initial_setpoint = 10.0
 
         logger.info(f"Attempting to take control with CS={initial_setpoint}...")
         status_cs, resp_cs = await self._send_command("CS", initial_setpoint)

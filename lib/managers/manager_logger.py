@@ -4,11 +4,22 @@ from machine import reset
 
 class Logger:
     """Manages error logging with minimal flash writes."""
+    _instance = None
+    _initialized = False  # Flag to ensure __init__ runs only once
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     ERROR_FILE = "lasterror.json"
     LOG_FILE = "log.txt"
 
     def __init__(self, debug_level=0):
+        if self._initialized:
+            return  # Already initialized, do nothing
+        self._initialized = True
+
         self._last_error = None
         self._debug_level = debug_level
         self._error_history = []  # Stores the last 3 errors and warnings
@@ -16,17 +27,17 @@ class Logger:
         self._max_error_history = 10
         self._error_rate_limit = 3
         self.error_rate_limiter_reached = False
+        print(f"Logger initialized with debug level {self._debug_level}")
 
     def get_level(self):
         return self._debug_level
     
-    def fatal(self, error_type, message, traceback=None):
+    def fatal(self, error_type, message, resetmachine:bool):
         """Logs a fatal error to flash. Only writes if different from last error."""
         new_error = {
             "timestamp": time.time(),
             "type": error_type,
             "message": message,
-            "traceback": traceback
         }
 
         # Only write if error is different from last one
@@ -40,6 +51,8 @@ class Logger:
 
         # Log to log.txt
         self._log_to_file(f"FATAL: {error_type} - {message}", "ERROR")
+        if resetmachine:
+            reset()
 
     def error(self, message):
         """Logs a non-fatal error to log.txt and tracks it for rate limiting."""

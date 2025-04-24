@@ -1,8 +1,9 @@
 import uasyncio as asyncio
 import ujson
 from umqtt.simple import MQTTClient
-from initialization import logger
+from managers.manager_logger import Logger
 
+logger = Logger()
 
 class BoilerController:
     def __init__(self, mqtt_broker, device_id="boiler", base_topic="mydevice/boiler",

@@ -2,7 +2,9 @@ import uasyncio as asyncio
 # from managers.manager_logger import Logger # No longer needed directly
 
 # Import the logger instance initialized in initialization.py
-from initialization import logger
+from managers.manager_logger import Logger
+
+logger = Logger()
 
 
 

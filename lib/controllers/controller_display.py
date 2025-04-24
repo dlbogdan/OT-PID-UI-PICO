@@ -1,8 +1,10 @@
 from drivers.driver_lcd import LCD
 import time
 from machine import Timer
-from initialization import logger
 
+from managers.manager_logger import Logger
+
+logger = Logger()
 
 class DisplayController:
     def __init__(self, lcd: LCD):

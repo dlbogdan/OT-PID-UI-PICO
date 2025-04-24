@@ -1,7 +1,9 @@
 import uasyncio
 import time
 from controllers.controller_otgw import OpenThermController, OTGW_RESPONSE_OK, OTGW_RESPONSE_TIMEOUT, OTGW_RESPONSE_UNKNOWN
-from initialization import logger
+from managers.manager_logger import Logger
+
+logger = Logger()
 
 
 # Status constants for command tracking
@@ -24,7 +26,8 @@ class OpenThermManager:
         # Stores the state of the last issued command for each type
         # Key: command code (e.g., "CS", "SW"), Value: dict
         self._command_states = {}
-
+        
+    
     async def start(self):
         """Starts the underlying controller and waits briefly for UART setup."""
         logger.info("Manager starting controller...")
@@ -106,11 +109,11 @@ class OpenThermManager:
     # --- Public Command Methods (Non-blocking) ---
 
     # - Boiler Control -
-    def take_control(self, initial_setpoint=10.0):
+    def take_control(self):
         # Refactored to use _launch_command for non-blocking execution
         # Uses "TCtrl" as the command code for tracking.
-        logger.info(f"Launching take_control task (CS={initial_setpoint})...")
-        return self._launch_command("TCtrl", self.controller.take_control, initial_setpoint)
+        logger.info(f"Launching take_control task")
+        return self._launch_command("TCtrl", self.controller.take_control)
 
     def relinquish_control(self):
         # Uses "CS0" as the command code for tracking relinquish (CS=0).
