@@ -3,8 +3,12 @@ import uasyncio
 import time
 import sys
 import select
-from altcontroller_otgw import OpenThermController, OTGW_RESPONSE_OK
-from lib.manager_error import ErrorManager # Assuming ErrorManager is in lib
+from controllers.controller_otgw import OpenThermController # Keep controller import for instantiation
+from managers.manager_otgw import OpenThermManager, CMD_STATUS_PENDING, CMD_STATUS_SUCCESS # Import Manager
+from managers.manager_logger import Logger
+
+# Instantiate the Logger
+error_manager = Logger()
 
 # --- Configuration ---
 # Set a debug level (0=Off, 1=Warnings/Errors, 2=Info, 3=Verbose)
@@ -26,172 +30,199 @@ def format_value(value):
     return str(value)
 
 def print_menu():
-    print("\n--- Menu ---")
-    print("1. Take Control (CS=40)")
-    print("2. Relinquish Control (CS=0)")
-    print("3. Set Control Setpoint (CS)")
-    print("4. Set DHW Setpoint (SW)")
-    print("5. Set Max Modulation (MM)")
-    print("6. Toggle Central Heating (CH)")
-    print("7. Toggle Hot Water Mode (HW=1/0)")
-    print("8. Set Max CH Setpoint (SH)")
-    print("9. Set Ventilation (VS %)")
-    print("10. Set Control Setpoint 2 (C2)")
-    print("11. Toggle CH2 Enable (H2)")
-    print("R. Reset Boiler Counter (RS)")
-    print("P. Request Priority Message (PM)")
-    print("--- Thermostat Overrides ---")
-    print("T. Set Temporary Room Setpoint (TT)")
-    print("C. Set Constant Room Setpoint (TC)")
-    print("S. Set Thermostat Clock (SC)")
-    print("M. Show Menu")
-    print("Enter choice:")
+    error_manager.info("\n--- Menu ---")
+    error_manager.info("1. Take Control (CS=40) - Note: Currently Blocks")
+    error_manager.info("2. Relinquish Control (CS=0)")
+    error_manager.info("3. Set Control Setpoint (CS)")
+    error_manager.info("4. Set DHW Setpoint (SW)")
+    error_manager.info("5. Set Max Modulation (MM)")
+    error_manager.info("6. Toggle Central Heating (CH)")
+    error_manager.info("7. Toggle Hot Water Mode (HW=1/0)")
+    error_manager.info("8. Set Max CH Setpoint (SH)")
+    error_manager.info("9. Set Ventilation (VS %)")
+    error_manager.info("10. Set Control Setpoint 2 (C2)")
+    error_manager.info("11. Toggle CH2 Enable (H2)")
+    error_manager.info("R. Reset Boiler Counter (RS)")
+    error_manager.info("P. Request Priority Message (PM)")
+    error_manager.info("--- Thermostat Overrides ---")
+    error_manager.info("T. Set Temporary Room Setpoint (TT)")
+    error_manager.info("C. Set Constant Room Setpoint (TC)")
+    error_manager.info("S. Set Thermostat Clock (SC)")
+    error_manager.info("L. Show Last Command Statuses") # New option
+    error_manager.info("M. Show Menu")
+    error_manager.info("Enter choice:")
 
-async def process_command(cmd, controller):
-    """Process the user's menu command."""
+# Changed function signature to accept manager
+# Reverted: No longer async, as manager methods are likely synchronous wrappers
+def process_command(cmd, manager: OpenThermManager):
+    """Process the user's menu command using the OpenThermManager."""
     cmd = cmd.strip().lower()
-    print(f"\nProcessing command: '{cmd}'")
+    error_manager.info(f"\nProcessing command: '{cmd}'")
+    launched = False # Flag to indicate if a command task was launched
+    # command_successful = None # Reverted
 
     if cmd == '1':
-        print("Attempting to take control...")
-        # Run in background so main loop isn't blocked by command wait
-        uasyncio.create_task(controller.take_control(initial_setpoint=40.0))
+        error_manager.info("Attempting to take control (non-blocking)...")
+        # Call the non-blocking manager method
+        launched = manager.take_control(initial_setpoint=40.0)
+        # The command now runs in the background. Check status with 'L' later.
+        # manager.take_control(initial_setpoint=40.0)
+        # TODO: Manager should ideally return True/False if task was launched - DONE
     elif cmd == '2':
-        print("Attempting to relinquish control...")
-        uasyncio.create_task(controller.relinquish_control())
+        error_manager.info("Attempting to relinquish control...")
+        # Call the manager method directly
+        launched = manager.relinquish_control()
+        # command_successful = (status_code == 0) # Reverted
+        # print(f"  Relinquish Control Result: Status={status_code}, Response='{response_data}'") # Reverted
     elif cmd == '3':
-        # This part IS blocking, but only briefly to get user input
         try:
             value = float(input("  Enter Control Setpoint (e.g., 55.0): "))
-            print(f"Setting CS to {value}...")
-            uasyncio.create_task(controller.set_control_setpoint(value))
+            error_manager.info(f"Requesting set CS to {value}...")
+            launched = manager.set_control_setpoint(value)
         except ValueError:
-            print("  Invalid temperature.")
+            error_manager.error("  Invalid temperature.")
     elif cmd == '4':
         try:
             value = float(input("  Enter DHW Setpoint (e.g., 48.0): "))
-            print(f"Setting SW to {value}...")
-            uasyncio.create_task(controller.set_dhw_setpoint(value))
+            error_manager.info(f"Requesting set SW to {value}...")
+            launched = manager.set_dhw_setpoint(value)
         except ValueError:
-            print("  Invalid temperature.")
+            error_manager.error("  Invalid temperature.")
     elif cmd == '5':
         try:
             value = int(input("  Enter Max Modulation (0-100): "))
             if 0 <= value <= 100:
-                print(f"Setting MM to {value}...")
-                uasyncio.create_task(controller.set_max_modulation(value))
+                error_manager.info(f"Requesting set MM to {value}...")
+                launched = manager.set_max_modulation(value)
             else:
-                print("  Value must be between 0 and 100.")
+                error_manager.error("  Value must be between 0 and 100.")
         except ValueError:
-            print("  Invalid percentage.")
-    elif cmd == '6': # Toggle CH - Use getter
-        if controller.is_active():
-            current_state = controller.is_ch_enabled()
+            error_manager.error("  Invalid percentage.")
+    elif cmd == '6': # Toggle CH - Use manager's proxied getter
+        if manager.is_active():
+            current_state = manager.is_ch_enabled()
             new_state = not current_state
-            print(f"Toggling CH from {format_value(current_state)} to {format_value(new_state)}...")
-            uasyncio.create_task(controller.set_central_heating(new_state))
+            error_manager.info(f"Requesting toggle CH from {format_value(current_state)} to {format_value(new_state)}...")
+            launched = manager.set_central_heating(new_state)
         else:
-            print("  Cannot toggle CH, controller not active.")
-    elif cmd == '7': # Toggle HW - Use getter
-         # HW command uses 0/1 for enable/disable
-         current_state = controller.is_dhw_enabled()
+            error_manager.error("  Cannot toggle CH, controller not active.")
+    elif cmd == '7': # Toggle HW - Use manager's proxied getter
+         current_state = manager.is_dhw_enabled()
          new_state_bool = not current_state
-         new_state_cmd = 1 if new_state_bool else 0 # Convert bool to 0/1 for command
-         print(f"Toggling HW Enable from {format_value(current_state)} to {format_value(new_state_bool)} (Using HW={new_state_cmd})...")
-         uasyncio.create_task(controller.set_hot_water_mode(new_state_cmd))
-         # Note: HW command might override thermostat even if controller isn't active.
-    elif cmd == '8': # Set Max CH Setpoint (SH)
+         new_state_cmd = 1 if new_state_bool else 0
+         error_manager.info(f"Requesting toggle HW Enable from {format_value(current_state)} to {format_value(new_state_bool)} (Using HW={new_state_cmd})...")
+         launched = manager.set_hot_water_mode(new_state_cmd)
+    elif cmd == '8':
         try:
             value = float(input("  Enter Max CH Setpoint (e.g., 75.0, 0=auto): "))
-            print(f"Setting SH to {value}...")
-            uasyncio.create_task(controller.set_max_ch_setpoint(value))
+            error_manager.info(f"Requesting set SH to {value}...")
+            launched = manager.set_max_ch_setpoint(value)
         except ValueError:
-            print("  Invalid temperature.")
-    elif cmd == '9': # Set Ventilation (VS)
+            error_manager.error("  Invalid temperature.")
+    elif cmd == '9':
         try:
             value = int(input("  Enter Ventilation Setpoint (0-100%): "))
             if 0 <= value <= 100:
-                print(f"Setting VS to {value}%...")
-                uasyncio.create_task(controller.set_ventilation_setpoint(value))
+                error_manager.info(f"Requesting set VS to {value}%...")
+                launched = manager.set_ventilation_setpoint(value)
             else:
-                print("  Value must be between 0 and 100.")
+                error_manager.error("  Value must be between 0 and 100.")
         except ValueError:
-            print("  Invalid percentage.")
-    elif cmd == '10': # Set Control Setpoint 2 (C2)
+            error_manager.error("  Invalid percentage.")
+    elif cmd == '10':
         try:
             value = float(input("  Enter Control Setpoint 2 (e.g., 40.0): "))
-            print(f"Setting C2 to {value}...")
-            uasyncio.create_task(controller.set_control_setpoint_2(value))
+            error_manager.info(f"Requesting set C2 to {value}...")
+            launched = manager.set_control_setpoint_2(value)
         except ValueError:
-            print("  Invalid temperature.")
+            error_manager.error("  Invalid temperature.")
     elif cmd == '11': # Toggle CH2 Enable (H2)
-        if controller.is_active(): # Assumes H2 only works when C2 is active (and C2 requires controller active)
-            # Need getter for H2 status (from ID 0, master bit 4)
-            # Placeholder: Assume toggling to OFF (0)
-            print("Toggling CH2 (requires getter - placeholder: setting H2=0)...")
-            uasyncio.create_task(controller.set_central_heating_2(False))
-            # TODO: Add getter is_ch2_enabled() to controller and use it here
+        if manager.is_active():
+            # TODO: Add manager.is_ch2_enabled() proxy
+            error_manager.info("Toggling CH2 (requires getter - placeholder: setting H2=0)...")
+            launched = manager.set_central_heating_2(False)
         else:
-            print("  Cannot toggle CH2, controller not active.")
-    elif cmd == 'r': # Reset Counter (RS)
+            error_manager.error("  Cannot toggle CH2, controller not active.")
+    elif cmd == 'r':
         try:
-            # List valid counters from OTGW docs
-            print("  Valid counters: HBS, HBH, HPS, HPH, WBS, WBH, WPS, WPH")
+            error_manager.info("  Valid counters: HBS, HBH, HPS, HPH, WBS, WBH, WPS, WPH")
             counter_name = input("  Enter counter name to reset: ").strip().upper()
-            print(f"Attempting to reset counter {counter_name}...")
-            uasyncio.create_task(controller.reset_boiler_counter(counter_name))
+            error_manager.info(f"Requesting reset counter {counter_name}...")
+            launched = manager.reset_boiler_counter(counter_name)
         except Exception as e:
-            print(f"  Error getting input: {e}")
-    elif cmd == 'p': # Request Priority Message
+            error_manager.error(f"  Error getting input: {e}")
+    elif cmd == 'p':
         try:
             value = int(input("  Enter Data ID to request (0-255): "))
-            print(f"Requesting priority message for ID {value}...")
-            uasyncio.create_task(controller.request_priority_message(value))
+            error_manager.info(f"Requesting priority message for ID {value}...")
+            launched = manager.request_priority_message(value)
         except ValueError:
-            print("  Invalid Data ID.")
-    elif cmd == 't': # Set Temporary Setpoint (TT)
+            error_manager.error("  Invalid Data ID.")
+    elif cmd == 't':
         try:
             value = float(input("  Enter Temporary Setpoint (0.0-30.0, 0=cancel): "))
-            print(f"Setting TT to {value:.2f}...")
-            uasyncio.create_task(controller.set_temporary_room_setpoint_override(value))
+            error_manager.info(f"Requesting set TT to {value:.2f}...")
+            launched = manager.set_temporary_room_setpoint_override(value)
         except ValueError:
-            print("  Invalid temperature.")
-    elif cmd == 'c': # Set Constant Setpoint (TC)
+            error_manager.error("  Invalid temperature.")
+    elif cmd == 'c':
         try:
             value = float(input("  Enter Constant Setpoint (0.0-30.0, 0=cancel): "))
-            print(f"Setting TC to {value:.2f}...")
-            uasyncio.create_task(controller.set_constant_room_setpoint_override(value))
+            error_manager.info(f"Requesting set TC to {value:.2f}...")
+            launched = manager.set_constant_room_setpoint_override(value)
         except ValueError:
-            print("  Invalid temperature.")
-    elif cmd == 's': # Set Clock (SC)
+            error_manager.error("  Invalid temperature.")
+    elif cmd == 's':
         try:
             time_str = input("  Enter Time (HH:MM): ").strip()
             day_int = int(input("  Enter Day of Week (1=Mon, 7=Sun): "))
-            print(f"Setting SC to {time_str} / {day_int}...")
-            uasyncio.create_task(controller.set_thermostat_clock(time_str, day_int))
+            error_manager.info(f"Requesting set SC to {time_str} / {day_int}...")
+            launched = manager.set_thermostat_clock(time_str, day_int)
         except ValueError:
-            print("  Invalid day or time format.")
+            error_manager.error("  Invalid day or time format.")
         except Exception as e:
-             print(f"  Error setting clock: {e}")
+             error_manager.error(f"  Error setting clock: {e}")
+    elif cmd == 'l': # Show Last Command Statuses
+         error_manager.info("\n--- Last Command Statuses ---")
+         states = manager._command_states # Access internal state for display
+         if not states:
+             error_manager.info("  No commands issued yet.")
+         else:
+             for code, state_data in sorted(states.items()):
+                 status = state_data.get("status", "unknown")
+                 result = state_data.get("result", "")
+                 err_code = state_data.get("error_code")
+                 ts = state_data.get("last_update", 0)
+                 error_manager.info(f"  {code:<5}: {status:<10} Err:{err_code!s:<5} Res:{result!s:<20} @ {ts:.0f}")
+         # No task launched for this command
     elif cmd == 'm':
-        pass # Menu will be printed by the main loop after command processing
+        pass
     else:
-        print("  Unknown command.")
+        error_manager.error("  Unknown command.")
 
-    # Give command task time to start/send
-    await uasyncio.sleep_ms(100)
+    if launched:
+        error_manager.info("  Command task launched successfully.")
+    elif cmd not in ('m', 'l', '1'): # Don't print for menu, status list, or blocking take_control
+        error_manager.error("  Command task NOT launched (maybe pending or invalid?).")
+
+    # No longer need sleep here, menu is printed after processing input
+    # await uasyncio.sleep_ms(100)
     print_menu() # Show menu again after processing
 
 async def main():
-    print("Starting OTGW Controller Monitor Script...")
-    error_mgr = ErrorManager(debug_level=DEBUG_LEVEL)
+    error_manager.info("Starting OTGW Controller Monitor Script...")
+    error_mgr = Logger(debug_level=DEBUG_LEVEL)
+    # Instantiate Controller first
     controller = OpenThermController(error_mgr)
+    # Instantiate Manager, passing the controller
+    manager = OpenThermManager(controller, error_mgr)
 
-    print("Starting controller tasks...")
-    await controller.start()
+    error_manager.info("Starting manager tasks...")
+    # Start the manager, which starts the controller and handles delays
+    await manager.start()
 
-    # Allow some time for UART connection
-    await uasyncio.sleep(2)
+    # Allow some time for UART connection - REMOVED, handled by manager.start()
+    # await uasyncio.sleep(2)
 
     last_print_time = time.time()
     current_input = ""
@@ -202,69 +233,78 @@ async def main():
 
     try:
         while True:
-            # --- Status Printing --- (Runs periodically)
+            # --- Status Printing --- (Runs periodically using Manager's proxy getters)
             current_time = time.time()
             if current_time - last_print_time >= PRINT_INTERVAL_S:
-                print(f"\n--- Status @ {current_time:.0f} ---")
-                print(f"  Controller Active: {format_value(controller.is_active())}")
-                print(f"  Fault Present:     {format_value(controller.is_fault_present())}")
-                print(f"  CH Enabled:        {format_value(controller.is_ch_enabled())}")
-                print(f"  DHW Enabled:       {format_value(controller.is_dhw_enabled())}")
-                print(f"  Flame On:          {format_value(controller.is_flame_on())}")
-                print(f"  Cooling Enabled:   {format_value(controller.is_cooling_enabled())}")
-                print(f"  Fault Flags:       {format_value(controller.get_fault_flags())}") # Shows active flags
-                print(f"  OEM Fault Code:    0x{controller.get_oem_fault_code() or 0:02X}")
-                print("  ---------------- Temperatures ----------------")
-                print(f"  Room Temp:         {format_value(controller.get_room_temperature())} C")
-                print(f"  Boiler Water Temp: {format_value(controller.get_boiler_water_temp())} C")
-                print(f"  DHW Temp:          {format_value(controller.get_dhw_temperature())} C")
-                print(f"  Outside Temp:      {format_value(controller.get_outside_temperature())} C")
-                print(f"  Return Water Temp: {format_value(controller.get_return_water_temp())} C")
-                print("  ---------------- Setpoints -------------------")
-                print(f"  Control Setpoint:  {format_value(controller.get_control_setpoint())} C")
-                print(f"  Control Setpoint2: {format_value(controller.get_control_setpoint_2())} C")
-                print(f"  Room Setpoint:     {format_value(controller.get_room_setpoint())} C")
-                print(f"  DHW Setpoint:      {format_value(controller.get_dhw_setpoint())} C")
-                print(f"  Max CH Setpoint:   {format_value(controller.get_max_ch_water_setpoint())} C")
-                print("  ---------------- Modulation & Other ----------")
-                print(f"  Modulation Level:  {format_value(controller.get_relative_modulation())} %")
-                print(f"  Max Modulation:    {format_value(controller.get_max_relative_modulation())} %")
-                print(f"  Ventilation Level: {format_value(controller.get_ventilation_setpoint())} %")
-                print(f"  CH Water Pressure: {format_value(controller.get_ch_water_pressure())} bar")
+                error_manager.info(f"\n--- Status @ {current_time:.0f} ---")
+                # --- Basic Status & Flags ---
+                error_manager.info(f"  Boiler Connected:  {format_value(manager.is_boiler_connected())}")
+                error_manager.info(f"  Controller Active: {format_value(manager.is_active())}")
+                error_manager.info(f"  Fault Present:     {format_value(manager.is_fault_present())}")
+                error_manager.info(f"  CH Enabled:        {format_value(manager.is_ch_enabled())}")
+                error_manager.info(f"  DHW Enabled:       {format_value(manager.is_dhw_enabled())}")
+                error_manager.info(f"  Flame On:          {format_value(manager.is_flame_on())}")
+                error_manager.info(f"  Cooling Enabled:   {format_value(manager.is_cooling_enabled())}")
+                # print(f"  CH2 Enabled:       {format_value(manager.is_ch2_enabled())}") # TODO: Add getter proxy
+                error_manager.info(f"  Fault Flags:       {format_value(manager.get_fault_flags())}")
+                error_manager.info(f"  OEM Fault Code:    0x{manager.get_oem_fault_code() or 0:02X}")
+
+                # --- Temperatures ---
+                error_manager.info("  ---------------- Temperatures ----------------")
+                error_manager.info(f"  Room Temp:         {format_value(manager.get_room_temperature())} C")
+                error_manager.info(f"  Boiler Water Temp: {format_value(manager.get_boiler_water_temp())} C")
+                error_manager.info(f"  DHW Temp:          {format_value(manager.get_dhw_temperature())} C")
+                error_manager.info(f"  Outside Temp:      {format_value(manager.get_outside_temperature())} C")
+                error_manager.info(f"  Return Water Temp: {format_value(manager.get_return_water_temp())} C")
+
+                # --- Setpoints ---
+                error_manager.info("  ---------------- Setpoints -------------------")
+                error_manager.info(f"  Control Setpoint:  {format_value(manager.get_control_setpoint())} C")
+                error_manager.info(f"  Control Setpoint2: {format_value(manager.get_control_setpoint_2())} C")
+                error_manager.info(f"  Room Setpoint:     {format_value(manager.get_room_setpoint())} C")
+                error_manager.info(f"  DHW Setpoint:      {format_value(manager.get_dhw_setpoint())} C")
+                error_manager.info(f"  Max CH Setpoint:   {format_value(manager.get_max_ch_water_setpoint())} C")
+
+                # --- Modulation & Other ---
+                error_manager.info("  ---------------- Modulation & Other ----------")
+                error_manager.info(f"  Modulation Level:  {format_value(manager.get_relative_modulation())} %")
+                error_manager.info(f"  Max Modulation:    {format_value(manager.get_max_relative_modulation())} %")
+                error_manager.info(f"  Ventilation Level: {format_value(manager.get_ventilation_setpoint())} %")
+                error_manager.info(f"  CH Water Pressure: {format_value(manager.get_ch_water_pressure())} bar")
 
                 last_print_time = current_time
 
-            # --- Input Handling --- (Runs every loop iteration)
+            # --- Input Handling --- (existing)
             # Check if input is available without blocking
             if spoll.poll(0):
                 char = sys.stdin.read(1)
                 if char in ('\r', '\n'): # Enter key pressed
-                    await process_command(current_input, controller)
+                    # Pass manager to process_command now
+                    # Call synchronously
+                    process_command(current_input, manager)
                     current_input = "" # Reset buffer
                 elif char == '\x08' or char == '\x7f': # Handle backspace/delete
                      if current_input:
                          current_input = current_input[:-1]
                          sys.stdout.write('\b \b') # Erase char on screen
-                # Check if character is printable ASCII (MicroPython doesn't have str.isprintable)
                 elif 32 <= ord(char) <= 126:
                     current_input += char
                     sys.stdout.write(char) # Echo printable characters
 
             # Keep loop responsive
-            await uasyncio.sleep_ms(50) # Shorter sleep for more responsive input
+            await uasyncio.sleep_ms(50)
 
     except KeyboardInterrupt:
-        print("\nInterrupted by user.")
+        error_manager.error("\nInterrupted by user.")
     except Exception as e:
-        print(f"An error occurred in main loop: {e}")
-        # import sys # Already imported
+        error_manager.error(f"An error occurred in main loop: {e}")
         sys.print_exception(e)
     finally:
-        print("\n--- Stopping Controller ---")
-        # Unregister stdin
+        error_manager.info("\n--- Stopping Manager ---")
         spoll.unregister(sys.stdin)
-        await controller.stop()
-        print("Controller stopped.")
+        # Stop the manager, which stops the controller
+        await manager.stop()
+        error_manager.info("Manager stopped.")
 
 if __name__ == "__main__":
     uasyncio.run(main()) 

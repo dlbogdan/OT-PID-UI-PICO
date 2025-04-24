@@ -2,10 +2,10 @@ from machine import UART
 from hardware_config import OT_UART_ID, OT_UART_TX_PIN, OT_UART_RX_PIN, OT_UART_BAUDRATE
 import time
 import uasyncio as asyncio
-from manager_error import ErrorManager
+from managers.manager_logger import Logger
 
-error_manager = ErrorManager()
-DEBUG = error_manager.get_debuglevel()
+error_manager = Logger()
+DEBUG = error_manager.get_level()
 
 class OpenthermUARTDriver:
     def __init__(self, periodic_update_interval_ms: int = 55000): # Default to 55 seconds
@@ -39,7 +39,7 @@ class OpenthermUARTDriver:
             except asyncio.CancelledError:
                 pass # Expected
             except Exception as e:
-                 error_manager.log_error(f"Error cancelling periodic task: {e}")
+                 error_manager.error(f"Error cancelling periodic task: {e}")
             self._periodic_task = None
         # Optional: Log the stop action
         # error_manager.log_info("OpenthermUARTDriver: Periodic updates stopped.")
@@ -80,7 +80,7 @@ class OpenthermUARTDriver:
                 self._do_periodic_update = False # Ensure loop condition breaks
                 break # Exit loop
             except Exception as e:
-                error_manager.log_error(f"Error in OT periodic update loop: {e}")
+                error_manager.error(f"Error in OT periodic update loop: {e}")
                 await asyncio.sleep(5) # Wait longer after error
         print("[OT Driver] Periodic update loop finished.")
 
@@ -481,6 +481,6 @@ class OpenthermController:
                 self._is_connected = False
 
         except Exception as e:
-            error_manager.log_error(f"Error in OpenthermController update: {e}")
+            error_manager.error(f"Error in OpenthermController update: {e}")
             self.last_response_type = 'COMM_ERROR'
             self.last_response_value = str(e)

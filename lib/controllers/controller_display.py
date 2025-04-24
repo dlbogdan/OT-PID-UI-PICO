@@ -1,9 +1,9 @@
 from drivers.driver_lcd import LCD
 import time
 from machine import Timer
+from managers.manager_logger import Logger
 
-
-
+logger = Logger()
 class DisplayController:
     def __init__(self, lcd: LCD):
         """Initialize with an LCD instance."""
@@ -220,7 +220,7 @@ class DisplayController:
 
     def load_custom_chars(self, custom_chars):
         """Loads all defined custom characters from CUSTOM_CHARS list into CGRAM."""
-        print("Loading custom characters to CGRAM...")
+        logger.info("Loading custom characters to CGRAM...")
         # Ensure we don't try to load more than 8
         num_chars_to_load = min(len(custom_chars), 8)
         for i in range(num_chars_to_load):
@@ -228,7 +228,7 @@ class DisplayController:
              if pattern and len(pattern) == 8: # Basic check for valid pattern
                  self.lcd.define_custom_char(i, pattern)
              else:
-                  print(f"Warning: Invalid pattern defined for custom char {i}. Skipping.")
-        print(f"Loaded {num_chars_to_load} custom characters.")
+                  logger.warning(f"Invalid pattern defined for custom char {i}. Skipping.")
+        logger.info(f"Loaded {num_chars_to_load} custom characters.")
         # Ensure DDRAM address is reset after loading all chars
         self.lcd.set_cursor(0,0)

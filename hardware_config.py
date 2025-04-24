@@ -79,7 +79,7 @@ from drivers.driver_mcp23017 import Portexpander, McpPin
 from drivers.driver_lcd import LCD
 from drivers.driver_HD44780 import LCD1602
 from drivers.driver_rgbled import RGBLED
-from controller_HID import HIDController
+from controllers.controller_HID import HIDController
 from machine import unique_id
 import binascii
 

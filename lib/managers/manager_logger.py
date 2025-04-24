@@ -2,7 +2,7 @@ import json
 import time
 from machine import reset
 from flags import DEBUG
-class ErrorManager:
+class Logger:
     """Manages error logging with minimal flash writes."""
 
     ERROR_FILE = "lasterror.json"
@@ -17,10 +17,10 @@ class ErrorManager:
         self._error_rate_limit = 3
         self.error_rate_limiter_reached = False
 
-    def get_debuglevel(self):
+    def get_level(self):
         return self._debug_level
     
-    def log_fatal_error(self, error_type, message, traceback=None):
+    def fatal(self, error_type, message, traceback=None):
         """Logs a fatal error to flash. Only writes if different from last error."""
         new_error = {
             "timestamp": time.time(),
@@ -41,24 +41,34 @@ class ErrorManager:
         # Log to log.txt
         self._log_to_file(f"FATAL: {error_type} - {message}", "ERROR")
 
-    def log_error(self, message):
+    def error(self, message):
         """Logs a non-fatal error to log.txt and tracks it for rate limiting."""
         print(f"ERROR: {message}")
         self._log_to_file("ERROR", f"{message}")
         self._track_error_rate()
         self._add_to_history("ERROR", message)
 
-    def log_warning(self, message):
+    def warning(self, message):
         """Logs a warning message to the history."""
         if DEBUG>=1:
             print(f"WARNING: {message}")
         self._add_to_history("WARNING", message)
 
-    def log_info(self, message):
-        """Logs an informational message to the history."""
+    def info(self, message):
+        """Logs an informational message."""
         if DEBUG>=2:
             print(f"INFO: {message}")
-        self._add_to_history("INFO", message)
+        #self._add_to_history("INFO", message) 
+
+    def debug(self, message):
+        """Logs a debug message."""
+        if DEBUG>=3:
+            print(f"DEBUG: {message}")
+
+    def trace(self, message):
+        """Logs a trace message."""
+        if DEBUG>=4:
+            print(f"TRACE: {message}")
 
     def _log_to_file(self,level, message):
         """Logs a message to the log file."""

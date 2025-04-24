@@ -6,12 +6,12 @@ import ubinascii
 import gc
 
 # Import WiFi Manager and Config Manager
-from manager_wifi import WiFiManager
-from manager_config import ConfigManager
+from managers.manager_wifi import WiFiManager
+from managers.manager_config import ConfigManager
 
 # Assuming service_mqtt.py is in the same directory or /lib
 
-from boilerhaentity import BoilerController
+from services.boilerhaentity import BoilerController
 
 
 # Load configuration
