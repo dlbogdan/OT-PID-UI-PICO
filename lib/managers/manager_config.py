@@ -35,8 +35,19 @@ class ConfigManager:
             self.config = {}
 
     def get_value(self, section, key, default=None):
-        """Retrieve the value associated with a key in a specific section."""
-        return self.config.get(section, {}).get(key, default)
+        """Retrieve the value associated with a key. If key or section is missing,
+           set it to the default value, save the config, and return the default."""
+        section_exists = section in self.config
+        key_exists = section_exists and key in self.config[section]
+
+        if key_exists:
+            return self.config[section][key] # Return existing value
+        else:
+            # Key (or section) does not exist
+            logger.info(f"Config key '{section}.{key}' not found. Setting default: '{default}'")
+            self.set_value(section, key, default) # Creates section if needed, sets value
+            self.save_config() # Save the newly added default to the file
+            return default # Return the default value
 
     def set_value(self, section, key, value):
         """Set the value of a key in a specific section. Creates section/key if needed."""
@@ -46,6 +57,7 @@ class ConfigManager:
 
     def save_config(self):
         """Save the current configuration to the config file."""
+        success = False
         try:
             with open(self.filename_config, 'w') as f:
                 for section, items in self.config.items():
@@ -53,10 +65,15 @@ class ConfigManager:
                     for key, value in items.items():
                         f.write(f'{key}={value}\n')
                     f.write('\n')
+            success = True
+            # Add specific confirmation log
+            logger.info(f"Config successfully saved to {self.filename_config}") 
             return True
         except Exception as e:
-            logger.error(f"Error saving config: {e}")
+            logger.error(f"Error saving config to {self.filename_config}: {e}")
             return False
+        # finally:
+        #     logger.debug(f"save_config finished. Success: {success}") # Optional debug
 
     
 # --- Factory Reset Function ---

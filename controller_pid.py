@@ -1,4 +1,8 @@
 import time
+# Import the logger instance initialized elsewhere (e.g., in main or initialization)
+from managers.manager_logger import Logger
+
+logger = Logger()
 
 # Detect if running in MicroPython-like environment with ticks_ms
 _use_ticks_ms = hasattr(time, 'ticks_ms')
@@ -107,84 +111,96 @@ class PIDController:
         Uses time.ticks_ms() for time calculation.
         Scales the valve input based on valve_input_min/max settings.
         """
-        # --- Input Scaling --- 
-        # Clamp the raw input valve value to the configured min/max range
-        clamped_valve = max(self.valve_input_min, min(current_max_valve, self.valve_input_max))
-        
-        # Scale the clamped value from [min, max] to [0, 100] for PID calculation
-        input_range = self.valve_input_max - self.valve_input_min
-        # We already validated input_range > 0 in __init__
-        scaled_valve_for_pid = ((clamped_valve - self.valve_input_min) / input_range) * 100.0
-        # --- End Input Scaling ---
-        
-        # --- Time Calculation (Portable) ---
-        dt = 1.0 # Default dt for first run or error cases
-        current_time_ref = None
-
-        if _use_ticks_ms:
-            current_time_ref = time.ticks_ms()
-            if self._last_time_ref is not None:
-                # Calculate dt in seconds using ticks_diff (handles wrap-around)
-                dt = time.ticks_diff(current_time_ref, self._last_time_ref) / 1000.0
-        else: # Assume standard Python, use time.monotonic()
-            current_time_ref = time.monotonic() # type: ignore # Returns seconds
-            if self._last_time_ref is not None:
-                dt = current_time_ref - self._last_time_ref
-        
-        # Prevent issues with zero or negative dt (can happen with very fast calls)
-        if dt <= 0:
-            dt = 1e-6 
-        
-        # Apply time acceleration factor for simulation
-        simulated_dt = dt * self.time_factor
-        
-        self._last_time_ref = current_time_ref # Store current time reference for the next calculation
-        # --- End Time Calculation ---
-
-        # Error: Positive error means valve opening is higher than target -> need more heat
-        # Use the scaled valve value for error calculation
-        error = scaled_valve_for_pid - self.setpoint 
-
-        # Proportional term
-        p_term = self.kp * error
-
-        # Integral term with anti-windup (Corrected Logic)
-        self._integral += error * simulated_dt # Update internal integral state first
-        
-        # Clamp the accumulated integral state
-        if self._integral_max is not None:
-            self._integral = min(self._integral, self._integral_max)
-        if self._integral_min is not None:
-            self._integral = max(self._integral, self._integral_min)
+        output_temp = self.output_min # Default to min output in case of error
+        try:
+            # --- Input Scaling --- 
+            # Clamp the raw input valve value to the configured min/max range
+            clamped_valve = max(self.valve_input_min, min(current_max_valve, self.valve_input_max))
             
-        # Calculate I term based on the clamped integral state
-        i_term = self.ki * self._integral 
+            # Scale the clamped value from [min, max] to [0, 100] for PID calculation
+            input_range = self.valve_input_max - self.valve_input_min
+            # We already validated input_range > 0 in __init__
+            scaled_valve_for_pid = ((clamped_valve - self.valve_input_min) / input_range) * 100.0
+            # --- End Input Scaling ---
+            
+            # --- Time Calculation (Portable) ---
+            dt = 1.0 # Default dt for first run or error cases
+            current_time_ref = None
 
-        # Derivative term
-        d_term = 0.0
-        # Calculate derivative only if dt is valid and reasonable (e.g., < 5s)
-        # Avoids derivative kick on first run or after long pauses
-        if self._last_time_ref is not None and 0 < simulated_dt < (5.0 * self.time_factor): 
-             # Calculate derivative using simulated time delta
-             derivative = (error - self._previous_error) / simulated_dt 
-             d_term = self.kd * derivative
-       
-        # Calculate base temperature from feed-forward
-        ff_base_temp = self._calculate_feed_forward(wind_speed, outside_temp, sun_illumination)
+            if _use_ticks_ms:
+                current_time_ref = time.ticks_ms()
+                if self._last_time_ref is not None:
+                    # Calculate dt in seconds using ticks_diff (handles wrap-around)
+                    dt = time.ticks_diff(current_time_ref, self._last_time_ref) / 1000.0
+            else: # Assume standard Python, use time.monotonic()
+                current_time_ref = time.monotonic() # type: ignore # Returns seconds
+                if self._last_time_ref is not None:
+                    dt = current_time_ref - self._last_time_ref
+            
+            # Prevent issues with zero or negative dt (can happen with very fast calls)
+            if dt <= 0:
+                dt = 1e-6 
+            
+            # Apply time acceleration factor for simulation
+            simulated_dt = dt * self.time_factor
+            
+            self._last_time_ref = current_time_ref # Store current time reference for the next calculation
+            # --- End Time Calculation ---
 
-        # Calculate PID adjustment 
-        pid_adjustment = p_term + i_term + d_term
+            # Error: Positive error means valve opening is higher than target -> need more heat
+            # Use the scaled valve value for error calculation
+            error = scaled_valve_for_pid - self.setpoint 
 
-        # Final output: Base temperature adjusted by PID
-        output_temp = ff_base_temp + pid_adjustment
+            # Proportional term
+            p_term = self.kp * error
 
-        # Final clamping of the combined result:
-        output_temp = max(self.output_min, min(self.output_max, output_temp))
+            # Integral term with anti-windup (Corrected Logic)
+            self._integral += error * simulated_dt # Update internal integral state first
+            
+            # Clamp the accumulated integral state
+            if self._integral_max is not None:
+                self._integral = min(self._integral, self._integral_max)
+            if self._integral_min is not None:
+                self._integral = max(self._integral, self._integral_min)
+                
+            # Calculate I term based on the clamped integral state
+            i_term = self.ki * self._integral 
 
-        # Update state for next iteration
-        self._previous_error = error
-        self.last_output = output_temp # Store the latest output
+            # Derivative term
+            d_term = 0.0
+            # Calculate derivative only if dt is valid and reasonable (e.g., < 5s)
+            # Avoids derivative kick on first run or after long pauses
+            if self._last_time_ref is not None and 0 < simulated_dt < (5.0 * self.time_factor): 
+                 # Calculate derivative using simulated time delta
+                 derivative = (error - self._previous_error) / simulated_dt 
+                 d_term = self.kd * derivative
+           
+            # Calculate base temperature from feed-forward
+            ff_base_temp = self._calculate_feed_forward(wind_speed, outside_temp, sun_illumination)
 
+            # Calculate PID adjustment 
+            pid_adjustment = p_term + i_term + d_term
+
+            # Final output: Base temperature adjusted by PID
+            output_temp = ff_base_temp + pid_adjustment
+
+            # Final clamping of the combined result:
+            output_temp = max(self.output_min, min(self.output_max, output_temp))
+
+            # Update state for next iteration - BEFORE assigning last_output
+            self._previous_error = error
+            
+            # Assign last output just before returning successfully
+            self.last_output = output_temp 
+
+        except Exception as e:
+            # Log any error occurring *within* the PID update calculation
+            logger.error(f"Error within PIDController.update: {e}")
+            # self.last_output remains unchanged (or None if error on first run)
+            # Return the safe default value
+            # return self.output_min # Already assigned at the start
+
+        # Return the calculated (or default if error) temperature
         return output_temp
 
     def reset(self):

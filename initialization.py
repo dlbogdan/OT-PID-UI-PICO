@@ -103,16 +103,15 @@ def load_config(cfg_mgr):
         "ot_max_heating_setpoint": float(cfg_mgr.get_value("OT", "MAX_HEATING_SETPOINT", 72.0)),
         "ot_manual_heating_setpoint": float(cfg_mgr.get_value("OT", "MANUAL_HEATING_SETPOINT", 55.0)),
         "ot_dhw_setpoint": float(cfg_mgr.get_value("OT", "DHW_SETPOINT", 50.0)),
-        "ot_manual_heating": _bool("OT", "MANUAL_HEATING"), # Note: This seems unused after loading? Check usage.
         "ot_enable_controller": _bool("OT", "ENABLE_CONTROLLER"),
         "ot_enable_heating": _bool("OT", "ENABLE_HEATING"),
         "ot_enable_dhw": _bool("OT", "ENABLE_DHW"),
         # Auto Heating Control (New)
         "auto_heat_enable": _bool("AUTOH", "ENABLE", True),
-        "auto_heat_disable_temp": float(cfg_mgr.get_value("AUTOH", "DISABLE_TEMP", 20.0)),
-        "auto_heat_disable_valve": float(cfg_mgr.get_value("AUTOH", "DISABLE_VALVE", 6.0)),
-        "auto_heat_enable_temp": float(cfg_mgr.get_value("AUTOH", "ENABLE_TEMP", 17.0)),
-        "auto_heat_enable_valve": float(cfg_mgr.get_value("AUTOH", "ENABLE_VALVE", 8.0)),
+        "auto_heat_off_temp": float(cfg_mgr.get_value("AUTOH", "OFF_TEMP", 20.0)),
+        "auto_heat_off_valve": float(cfg_mgr.get_value("AUTOH", "OFF_VALVE_LEVEL", 6.0)),
+        "auto_heat_on_temp": float(cfg_mgr.get_value("AUTOH", "ON_TEMP", 17.0)),
+        "auto_heat_on_valve": float(cfg_mgr.get_value("AUTOH", "ON_VALVE_LEVEL", 8.0)),
         # MQTT (Keep even if unused for now, might be needed later)
         "mqtt_broker": cfg_mgr.get_value("MQTT", "BROKER"),
         "mqtt_port": int(cfg_mgr.get_value("MQTT", "PORT", 1883)),
@@ -207,10 +206,10 @@ def setup_gui(gui, cfg_mgr, cfg, wifi, hm, ot_manager):
         ]),
         Menu("Auto Heating", [ # New Menu for Auto Heating
             BoolField("Enable Auto", cfg.get("auto_heat_enable", True), lambda v: save("AUTOH", "ENABLE", v)),
-            FloatField("Disable Temp >=", cfg.get("auto_heat_disable_temp", 20.0), lambda v: save("AUTOH", "DISABLE_TEMP", v)),
-            FloatField("Disable Valve <", cfg.get("auto_heat_disable_valve", 6.0), lambda v: save("AUTOH", "DISABLE_VALVE", v)),
-            FloatField("Enable Temp <", cfg.get("auto_heat_enable_temp", 17.0), lambda v: save("AUTOH", "ENABLE_TEMP", v)),
-            FloatField("Enable Valve >", cfg.get("auto_heat_enable_valve", 8.0), lambda v: save("AUTOH", "ENABLE_VALVE", v)),
+            FloatField("Disable Temp >=", cfg.get("auto_heat_off_temp", 20.0), lambda v: save("AUTOH", "OFF_TEMP", v)),
+            FloatField("Disable Valve <", cfg.get("auto_heat_off_valve", 6.0), lambda v: save("AUTOH", "OFF_VALVE_LEVEL", v)),
+            FloatField("Enable Temp <", cfg.get("auto_heat_on_temp", 17.0), lambda v: save("AUTOH", "ON_TEMP", v)),
+            FloatField("Enable Valve >", cfg.get("auto_heat_on_valve", 8.0), lambda v: save("AUTOH", "ON_VALVE_LEVEL", v)),
         ]),
         Menu("Device", [
             Action("View Log", lambda: gui.switch_mode("logview")),
@@ -248,7 +247,7 @@ def setup_gui(gui, cfg_mgr, cfg, wifi, hm, ot_manager):
                        lambda: f"Control SP: {ot_manager.get_control_setpoint()}"))
     # Page 5: OT controller status (using manager getters)
     mon.add_page(Page(lambda: f"OT State: {'On' if ot_manager.is_active() else 'Off'}",
-                       lambda: f"Heat: {'On' if ot_manager.is_ch_enabled() else 'Off'} DHW: {'On' if ot_manager.is_dhw_enabled() else 'Off'}"))
+                       lambda: f"CH: {'On' if ot_manager.is_ch_enabled() else 'Off'} DHW: {'On' if ot_manager.is_dhw_enabled() else 'Off'}"))
     # Page 6: Room with max valve opening
     mon.add_page(Page(lambda: f"Room: {hm.max_valve_room_name}",
                        lambda: f"Max Valve: {hm.max_valve:.1f}%" if hm.is_ccu_connected() else "(CCU Offline)"))

@@ -49,7 +49,7 @@ Kp, Ki, Kd, OUT = 0.0, 0.0, 0.0, 54.0
 #  Background task registration
 # --------------------------------------------------------------------------- #
 
-def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid=None, interval_s=None, cfg=None):
+def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid=None, interval_s=None, cfg_mgr=None):
     # Tasks are now imported from main_tasks.py
     tasks_to_schedule = [
         wifi_task(wifi), 
@@ -61,9 +61,9 @@ def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid=None, interval_s
         ot_manager.start()
     ]
     # Conditionally add the PID task if it exists
-    if pid is not None and interval_s is not None and cfg is not None:
-        logger.info("Scheduling PID control task.")
-        tasks_to_schedule.append(pid_control_task(pid, hm, ot_manager, interval_s, cfg))
+    if pid is not None and interval_s is not None and cfg_mgr is not None:
+        logger.info("Scheduling PID/Manual Control task.")
+        tasks_to_schedule.append(pid_control_task(pid, hm, ot_manager, interval_s, cfg_mgr))
         # Schedule the new logging task
         logger.info("Scheduling PID output logging task.")
         tasks_to_schedule.append(log_pid_output_task(pid)) # Default interval is 60s
@@ -165,7 +165,9 @@ async def main():  # noqa: C901 (Complexity will be reduced)
     loop = asyncio.get_event_loop()
     # Pass pid_instance and interval to schedule_tasks if pid was created
     if pid_instance:
-        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons, pid=pid_instance, interval_s=cfg["pid_interval_s"], cfg=cfg)
+        # Ensure value is converted to string and provide fallback before int()
+        interval_val_str = str(cfg_mgr.get_value("PID", "UPDATE_INTERVAL_SEC", 30) or 30)
+        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons, pid=pid_instance, interval_s=int(interval_val_str), cfg_mgr=cfg_mgr)
     else:
         # Schedule without PID if it failed to initialize
         logger.error("PID instance not created, scheduling tasks without PID control.")

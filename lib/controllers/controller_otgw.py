@@ -283,7 +283,7 @@ class OpenThermController():
             if self._is_controller_active:
                 now = time.time()
                 resend_needed = False
-                # Check if CS override needs periodic refresh
+                # Check if CS override needs periodic refresh (Required to maintain control)
                 if self._control_setpoint_override >= 8.0:
                      logger.info("Keep-alive: Resending CS command.")
                      await self._send_command("CS", self._control_setpoint_override, timeout=5)

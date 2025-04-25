@@ -1,4 +1,3 @@
-
 # Hardware configuration constants
 I2C_ID = 1
 I2C_SDA_PIN = 14
@@ -142,15 +141,38 @@ def ConfigFileName(factory:bool=False):
         return "config.txt"
 
 DEFAULT_FACTORY_CONFIG = {
+    "DEVICE": {
+        "DEBUG": "1",
+    },
     "WIFI": {
-        "SSID": "DEFAULT_SSID",
-        "PASS": "DEFAULT_PASSWORD"
+        "SSID": "",
+        "PASS": "",
     },
     "CCU3": {
         "IP": "0.0.0.0",
         "USER": "",
         "PASS": "",
-        "VALVE_DEVTYPE": "HmIP-eTRV" # Or your default valve type
-    }
+        "VALVE_DEVTYPE": "HmIP-eTRV",
+        "WEATHER_DEVTYPE": "HmIP-SWO",
+    },
+    "OT": {
+        "MAX_HEATING_SETPOINT": "72.0",
+        "MANUAL_HEATING_SETPOINT": "55.0",
+        "DHW_SETPOINT": "50.0",
+        "ENABLE_CONTROLLER": "False",
+        "ENABLE_HEATING": "False",
+        "ENABLE_DHW": "True",
+    },
+    "AUTOH": {
+        "ENABLE": "True",
+        "OFF_TEMP": "20.0",
+        "OFF_VALVE_LEVEL": "6.0",
+        "ON_TEMP": "17.0",
+        "ON_VALVE_LEVEL": "8.0",
+    },
+    "MQTT": {
+        "BROKER": "",
+        "PORT": "1883",
+    },
 }
 # ------------------------------------
