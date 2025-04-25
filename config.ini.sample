@@ -1,0 +1,23 @@
+# ... existing [MQTT] section ...
+MQTT_PASS         = ""
+MQTT_BASE_TOPIC = "home/ot-controller"
+
+[PID]
+# Proportional, Integral, Derivative gains
+KP = 0.05
+KI = 0.002
+KD = 0.01
+# Target scaled valve opening (%)
+SETPOINT = 25.0
+# How often to run the PID calculation (seconds)
+UPDATE_INTERVAL_SEC = 30
+# Valve input scaling range (%)
+VALVE_MIN = 8.0
+VALVE_MAX = 70.0
+# Feed-Forward parameters
+FF_WIND_COEFF = 0.1
+FF_WIND_INTERACTION_COEFF = 0.008
+FF_TEMP_COEFF = 1.1
+FF_SUN_COEFF = 0.0001
+BASE_TEMP_REF_OUTSIDE = 10.0
+BASE_TEMP_BOILER = 45.0 

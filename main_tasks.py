@@ -73,4 +73,52 @@ async def main_status_task(hm, wifi, led):
             hm.set_paused(True)
             led.set_color("red", blink=True, duration_on=1000, duration_off=1000)
 
-        await asyncio.sleep(1) 
+        await asyncio.sleep(1)
+
+
+async def pid_control_task(pid, hm, ot_manager, interval_s):
+    """Periodically calculates and applies the PID control output."""
+    logger.info(f"Starting PID task with interval {interval_s}s.")
+    # Small initial delay to allow other systems to stabilize?
+    await asyncio.sleep(5)
+
+    while True:
+        try:
+            # Use actual sleep interval from config
+            await asyncio.sleep(interval_s)
+
+            # Check if OT control is active and heating is enabled
+            # Note: These checks might need refinement based on exact OT manager logic
+            if ot_manager.is_active() and ot_manager.is_ch_enabled():
+                
+                # Get valve input
+                current_max_valve = hm.max_valve
+                #todo
+                # Get weather data (PLACEHOLDER - Needs real implementation later)
+                # You'll need a weather service/sensor readings here
+                current_wind = 0.0 # km/h
+                current_temp = 10.0 # deg C
+                current_sun = 0.0 # lux
+                
+                # Calculate PID output
+                output_temp = pid.update(
+                    current_max_valve,
+                    current_wind,
+                    current_temp,
+                    current_sun
+                )
+                
+                logger.info(f"PID Update: MaxValve={current_max_valve:.1f} -> BoilerTemp={output_temp:.2f}")
+                
+                # Apply the calculated temperature to the OpenTherm controller
+                ot_manager.set_control_setpoint(output_temp)
+
+            else:
+                # Optional: Log that PID is inactive
+                # logger.debug("PID inactive (OT control/heating disabled)")
+                pass # Do nothing if controller or heating is disabled
+
+        except Exception as e:
+            logger.error(f"PID Task Error: {e}")
+            # Avoid rapid looping on error
+            await asyncio.sleep(interval_s) 

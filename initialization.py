@@ -98,6 +98,7 @@ def load_config(cfg_mgr):
         "ccu_user": cfg_mgr.get_value("CCU3", "USER", ""),
         "ccu_pass": cfg_mgr.get_value("CCU3", "PASS", ""),
         "valve_type": cfg_mgr.get_value("CCU3", "VALVE_DEVTYPE", "HmIP-eTRV"),
+        "weather_sensor_type": cfg_mgr.get_value("CCU3", "WEATHER_SENSOR_DEVTYPE", "HmIP-WTH"),
         # OpenTherm
         "ot_max_heating_setpoint": float(cfg_mgr.get_value("OT", "MAX_HEATING_SETPOINT", 72.0)),
         "ot_manual_heating_setpoint": float(cfg_mgr.get_value("OT", "MANUAL_HEATING_SETPOINT", 55.0)),
@@ -112,6 +113,20 @@ def load_config(cfg_mgr):
         "mqtt_user": cfg_mgr.get_value("MQTT", "USER", ""),
         "mqtt_pass": cfg_mgr.get_value("MQTT", "PASS", ""),
         "mqtt_base_topic": cfg_mgr.get_value("MQTT", "BASE_TOPIC", "home/ot-controller"),
+        # PID Controller
+        "pid_kp": float(cfg_mgr.get_value("PID", "KP", 0.05)),
+        "pid_ki": float(cfg_mgr.get_value("PID", "KI", 0.002)),
+        "pid_kd": float(cfg_mgr.get_value("PID", "KD", 0.01)),
+        "pid_setpoint": float(cfg_mgr.get_value("PID", "SETPOINT", 25.0)),
+        "pid_interval_s": int(cfg_mgr.get_value("PID", "UPDATE_INTERVAL_SEC", 30)),
+        "pid_valve_min": float(cfg_mgr.get_value("PID", "VALVE_MIN", 8.0)),
+        "pid_valve_max": float(cfg_mgr.get_value("PID", "VALVE_MAX", 70.0)),
+        "pid_ff_wind": float(cfg_mgr.get_value("PID", "FF_WIND_COEFF", 0.1)),
+        "pid_ff_wind_interact": float(cfg_mgr.get_value("PID", "FF_WIND_INTERACTION_COEFF", 0.008)),
+        "pid_ff_temp": float(cfg_mgr.get_value("PID", "FF_TEMP_COEFF", 1.1)),
+        "pid_ff_sun": float(cfg_mgr.get_value("PID", "FF_SUN_COEFF", 0.0001)),
+        "pid_base_temp_ref": float(cfg_mgr.get_value("PID", "BASE_TEMP_REF_OUTSIDE", 10.0)),
+        "pid_base_temp_boiler": float(cfg_mgr.get_value("PID", "BASE_TEMP_BOILER", 45.0)),
     }
     logger.info("Configuration loaded.")
     return cfg
@@ -223,6 +238,9 @@ def setup_gui(gui, cfg_mgr, cfg, wifi, hm, ot_manager):
     # Page 6: Room with max valve opening
     mon.add_page(Page(lambda: f"Room: {hm.max_valve_room_name}",
                        lambda: f"Max Valve: {hm.max_valve:.1f}%" if hm.is_ccu_connected() else "(CCU Offline)"))
+    # Page 7: Weather Data
+    mon.add_page(Page(lambda: f"T {hm.temperature:.1f}C" if hm.temperature is not None else "T --",
+                       lambda: f"W {hm.wind_speed:.1f} L {hm.illumination:.0f}" if hm.wind_speed is not None and hm.illumination is not None else "W -- L --"))
 
     gui.add_mode("monitoring", mon)
 
@@ -246,7 +264,7 @@ def initialize_services():
     wifi = WiFiManager(cfg["ssid"], cfg["wifi_pass"], unique_hardware_name()[:15])
     hm = HomematicDataService(
         f"http://{cfg['ccu_ip']}/api/homematic.cgi",
-        cfg["ccu_user"], cfg["ccu_pass"], cfg["valve_type"]
+        cfg["ccu_user"], cfg["ccu_pass"], cfg["valve_type"], cfg["weather_sensor_type"]
     )
 
     logger.info("Services initialised.")

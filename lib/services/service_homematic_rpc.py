@@ -205,7 +205,37 @@ class HomematicRPCClient:
         channel_address = f"{address}:1"
         # Await the async get_value
         return await self.get_value(interface, channel_address, "LEVEL")
-    
+
+    async def get_weather_data(self, interface, address):
+        """ASYNC Convenience method to get weather data ('ACTUAL_TEMPERATURE', 'WIND_SPEED', 'ILLUMINATION')."""
+        # Weather sensors typically report values on channel 1
+        channel_address = f"{address}:1"
+        tasks = [
+            self.get_value(interface, channel_address, "ACTUAL_TEMPERATURE"),
+            self.get_value(interface, channel_address, "WIND_SPEED"),
+            self.get_value(interface, channel_address, "ILLUMINATION")
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        weather_data = {}
+        keys = ["ACTUAL_TEMPERATURE", "WIND_SPEED", "ILLUMINATION"]
+        for i, result in enumerate(results):
+            key = keys[i]
+            if isinstance(result, Exception):
+                logger.warning(f"Async HC Warning: Failed to get {key} for {interface}/{channel_address}: {result}")
+                weather_data[key] = None
+            elif result is None:
+                logger.warning(f"Async HC Warning: Received None for {key} for {interface}/{channel_address}")
+                weather_data[key] = None
+            else:
+                try:
+                    # Attempt to convert to float, handle potential errors
+                    weather_data[key] = float(result)
+                except (ValueError, TypeError):
+                    logger.warning(f"Async HC Warning: Invalid value type '{result}' ({type(result)}) received for {key} for {interface}/{channel_address}")
+                    weather_data[key] = None
+        return weather_data
+
     async def list_all_rooms(self):
         """ASYNC Retrieves all room IDs from CCU3 via Room.listAll."""
         # #disable this method for now
@@ -245,10 +275,10 @@ CACHE_FILENAME = "hm_device_cache.json" #todo: move to config
 class HomematicDataService:
     """
     Handles async communication with Homematic CCU3 via JSON-RPC.
-    Provides login management and periodic data fetch for valve devices.
-    Uses persistent caching for discovered devices.
+    Provides login management and periodic data fetch for valve devices and weather sensors.
+    Uses persistent caching for discovered valve devices.
     """
-    def __init__(self, base_url, username, password, valve_device_type):
+    def __init__(self, base_url, username, password, valve_device_type, weather_sensor_type):
         """
         Initialize the Homematic service with the CCU3 API URL and credentials.
         Tries to load the device cache from flash.
@@ -257,7 +287,8 @@ class HomematicDataService:
         self._rpc = JsonRpcClient(base_url)
         self._hm = HomematicRPCClient(self._rpc, username, password)
         self.valve_device_type = valve_device_type  # e.g. "HmIP-eTRV" for thermostat valves
-        # Last fetched data
+        self.weather_sensor_type = weather_sensor_type # e.g., "HmIP-SWO"
+        # Last fetched valve data
         self.total_devices = 0
         self.valve_devices = 0
         self.reporting_valves = 0
@@ -266,6 +297,14 @@ class HomematicDataService:
         # Store the identified valve devices to avoid rediscovery
         self._valve_device_list = None # List of dicts: {'iface': str, 'addr': str, 'room_name': str}
         self.max_valve_room_name = "Unknown" # Room corresponding to max_valve
+
+        # <<<--- NEW: Weather Sensor Attributes ---
+        self._weather_sensor_iface = None
+        self._weather_sensor_addr = None
+        self.temperature = None
+        self.wind_speed = None
+        self.illumination = None
+        # <<<------------------------------------>
 
         # Current fetch task (if any)
         self.ms_between_fetches = 60000  # 1 minute
@@ -279,7 +318,7 @@ class HomematicDataService:
 
         logger.info("HomematicDataService initialized.")
         if self._valve_device_list is not None:
-            logger.info(f"  Loaded {len(self._valve_device_list)} devices from cache.")
+            logger.info(f"  Loaded {len(self._valve_device_list)} valve devices from cache.")
 
     # <<<--- NEW: LOAD CACHE METHOD ---
     def _load_cache(self):
@@ -388,6 +427,54 @@ class HomematicDataService:
 
         return True # Indicate discovery success
 
+    # <<<--- NEW: DISCOVER WEATHER SENSOR METHOD ---
+    async def _discover_weather_sensor(self):
+        """Internal helper to discover the first weather sensor device.
+           Sets self._weather_sensor_iface and self._weather_sensor_addr on success.
+           Returns True on success (even if none found), False on communication failure.
+        """
+        logger.info("HomematicService: Discovering weather sensor...")
+        # Reset sensor details before discovery
+        self._weather_sensor_iface = None
+        self._weather_sensor_addr = None
+
+        device_ids = await self._hm.get_device_ids()
+
+        if device_ids is None:
+            logger.error("HomematicService: Failed to retrieve device list during weather sensor discovery")
+            return False # Indicate discovery failure
+
+        sensor_found = False
+        for device_id in device_ids:
+            # Skip irrelevant IDs (can be adjusted)
+            if device_id == "12": continue
+            try:
+                if int(device_id) < 100: continue
+            except ValueError: pass # Non-numeric ID, continue
+
+            details = await self._hm.get_device_details(device_id)
+            if not details or not isinstance(details, dict): continue
+
+            dev_type = details.get("type", "")
+            dev_addr = details.get("address")
+            iface = details.get("interface", "HmIP-RF") # Default if not specified
+
+            # Check if the type matches the configured weather sensor type
+            if dev_addr and self.weather_sensor_type in dev_type:
+                logger.info(f"HomematicService: Found weather sensor: Type='{dev_type}', Address='{dev_addr}', Interface='{iface}'")
+                self._weather_sensor_iface = iface
+                self._weather_sensor_addr = dev_addr
+                sensor_found = True
+                break # Found the first one, stop searching
+
+        if not sensor_found:
+            logger.warning(f"HomematicService: No weather sensor device found matching type '{self.weather_sensor_type}'.")
+            # Return True because the discovery itself didn't fail, just didn't find one.
+            return True
+        else:
+            return True # Indicate discovery success (sensor found)
+    # <<<----------------------------------------->
+
     def paused(self) -> bool:
         """Returns True if the data is paused."""
         return self._paused
@@ -439,66 +526,52 @@ class HomematicDataService:
             return True
         return False
 
-    async def fetch_data(self):
-        """
-        Async coroutine to fetch all device IDs and valve positions from the CCU3.
-        Updates the internal data attributes. Returns True on success, False on error.
-        """
-        try:
-            # Ensure we have a valid session (login if not already logged in)
-            if not self._hm.is_logged_in():
-                if not await self._hm.login():
-                    # Login failed
-                    logger.error("HomematicService: Login failed")
-                    self._valve_device_list = None # Clear cache on login failure
-                    self.reporting_valves = -1
-                    return False
+    async def _fetch_valves_data(self) -> tuple[bool, bool]:
+        """Fetches data for valve devices. Returns (discovery_ok, fetch_ok)."""
+        discovery_ok = True
+        fetch_ok = True
+        fetch_error_occurred = False
 
-            # --- Step 1: Discover devices if cache is empty ---
-            if self._valve_device_list is None:
-                discovery_success = await self._discover_valve_devices_and_rooms()
-                if not discovery_success:
-                    # Discovery failed due to communication error
-                    self.reporting_valves = -1 # Keep error state
-                    return False # Exit fetch_data
-                # If discovery succeeded, self._valve_device_list is now populated (or empty)
+        # --- Discover valves if cache is empty ---
+        if self._valve_device_list is None:
+            discovery_ok = await self._discover_valve_devices_and_rooms()
+            if not discovery_ok:
+                # Valve Discovery failed due to communication error
+                self.reporting_valves = -1 # Keep error state
+                logger.error("HomematicService: Valve discovery failed.")
+                return False, False # Discovery failed, fetch implicitly failed
+            # If discovery succeeded, self._valve_device_list is now populated (or empty)
 
-            # --- Step 2: Process the valve list (fetch LEVELs) ---
-            # Use the potentially just-populated or existing cache
-            valve_list_to_process = self._valve_device_list
+        # --- Process the valve list (fetch LEVELs) ---
+        valve_list_to_process = self._valve_device_list
 
-            if valve_list_to_process is None:
-                 # Should not happen if discovery logic is correct, but handle defensively
-                 logger.error("HomematicService Error: valve_list_to_process is unexpectedly None after discovery check.")
-                 self.reporting_valves = -1
-                 return False
-            
-            if not valve_list_to_process: # Discovery succeeded but found 0 devices
-                logger.info("HomematicService: No valve devices in list to process.")
-                self.valve_devices = 0
-                self.reporting_valves = 0
-                self.avg_valve = 0.0
-                self.max_valve = 0.0
-                self.max_valve_room_name = "Unknown"
-                return True # Successful fetch (of nothing)
-
-            # If we have devices in the list, proceed to fetch levels
+        if valve_list_to_process is None:
+             logger.error("HomematicService Error: valve_list_to_process is unexpectedly None after discovery check.")
+             self.reporting_valves = -1
+             return discovery_ok, False # Discovery might have been ok, but processing failed
+        elif not valve_list_to_process: # Discovery succeeded but found 0 devices
+            logger.info("HomematicService: No valve devices in list to process.")
+            self.valve_devices = 0
+            self.reporting_valves = 0
+            self.avg_valve = 0.0
+            self.max_valve = 0.0
+            self.max_valve_room_name = "Unknown"
+            # Success fetching valves (of nothing)
+        else:
+            # If we have valve devices in the list, proceed to fetch levels
             logger.info(f"HomematicService: Fetching levels for {len(valve_list_to_process)} valve devices...")
             self.valve_devices = len(valve_list_to_process)
             total_position = 0.0
             report_count = 0
             max_position = 0.0
-            fetch_error_occurred = False
             current_max_room_name = "Unknown" # Track room for this fetch
 
             for valve_info in valve_list_to_process: # Iterate through list of dicts
                 iface = valve_info['iface']
                 dev_addr = valve_info['addr']
-                # room_name = valve_info['room_name'] # Available if needed
 
                 pos_str = await self._hm.get_valve_position(iface, dev_addr)
                 if pos_str is None:
-                    # Error getting value for this device
                     logger.warning(f"HomematicService Warning: Failed to get LEVEL for {iface}/{dev_addr}")
                     fetch_error_occurred = True
                     continue # Skip this device but continue with others
@@ -507,27 +580,131 @@ class HomematicDataService:
                 except ValueError:
                     logger.warning(f"HomematicService Warning: Invalid LEVEL value '{pos_str}' for {iface}/{dev_addr}")
                     continue # Skip invalid value
-                
+
                 total_position += pos_val
                 report_count += 1
                 if pos_val > max_position:
                     max_position = pos_val
                     current_max_room_name = valve_info['room_name'] # Store room name when max is updated
-            
-            # Update stats
+
+            # Update valve stats
             self.reporting_valves = report_count
             self.avg_valve = (total_position / report_count) * 100.0 if report_count > 0 else 0.0
             self.max_valve = max_position * 100.0 # Store as percentage
             self.max_valve_room_name = current_max_room_name if report_count > 0 else "Unknown" # Update service attribute
 
-            # If an error occurred fetching any value, clear the cached list for next time
             if fetch_error_occurred:
-                logger.warning("HomematicService: Clearing cached valve list due to fetch error(s).")
-                self._valve_device_list = None
-                # Return False as the data might be incomplete/stale
-                return False 
+                fetch_ok = False
+
+        return discovery_ok, fetch_ok
+
+    async def _fetch_weather_data(self) -> tuple[bool, bool]:
+        """Fetches data for the weather sensor. Returns (discovery_ok, fetch_ok)."""
+        discovery_ok = True
+        fetch_ok = True
+        fetch_error_occurred = False
+
+        # --- Discover weather sensor if details unknown ---
+        if self._weather_sensor_addr is None:
+            discovery_ok = await self._discover_weather_sensor()
+            if not discovery_ok:
+                logger.error("HomematicService: Weather sensor discovery failed.")
+                self.temperature = None # Reset weather data
+                self.wind_speed = None
+                self.illumination = None
+                return False, False # Discovery failed, fetch implicitly failed
+            # If discovery succeeded, sensor details are now populated (or still None if not found)
+
+        # --- Fetch Weather Data ---
+        if self._weather_sensor_addr and self._weather_sensor_iface:
+            logger.info(f"HomematicService: Fetching weather data from {self._weather_sensor_iface}/{self._weather_sensor_addr}...")
+            weather_data = await self._hm.get_weather_data(self._weather_sensor_iface, self._weather_sensor_addr)
+
+            if weather_data:
+                # Update attributes, handling potential None values from get_weather_data
+                self.temperature = weather_data.get("ACTUAL_TEMPERATURE")
+                self.wind_speed = weather_data.get("WIND_SPEED")
+                self.illumination = weather_data.get("ILLUMINATION")
+
+                # Check if any weather value fetch failed (returned None)
+                if None in weather_data.values():
+                    logger.warning("HomematicService: One or more weather values failed to fetch.")
+                    fetch_error_occurred = True
             else:
-                return True # Success
+                # get_weather_data itself might have failed or returned empty
+                logger.error("HomematicService: Failed to get weather data dictionary.")
+                fetch_error_occurred = True
+                self.temperature = None # Reset data
+                self.wind_speed = None
+                self.illumination = None
+
+            if fetch_error_occurred:
+                fetch_ok = False
+
+        else: # No weather sensor discovered or details cleared previously
+             logger.info("HomematicService: No weather sensor configured or discovered to fetch data from.")
+             self.temperature = None # Ensure data is None if no sensor
+             self.wind_speed = None
+             self.illumination = None
+             # Fetch is considered ok even if no sensor found, unless discovery failed
+
+        return discovery_ok, fetch_ok
+
+    async def fetch_data(self):
+        """
+        Async coroutine to fetch valve and weather data from the CCU3.
+        Updates the internal data attributes. Returns True on overall success, False on error.
+        """
+        overall_success = True
+        any_fetch_error = False
+
+        try:
+            # Ensure we have a valid session (login if not already logged in)
+            if not self._hm.is_logged_in():
+                if not await self._hm.login():
+                    # Login failed
+                    logger.error("HomematicService: Login failed before fetch.")
+                    self._valve_device_list = None # Clear valve cache on login failure
+                    self._weather_sensor_iface = None # Clear weather sensor details
+                    self._weather_sensor_addr = None
+                    self.reporting_valves = -1
+                    self.temperature = None # Reset weather data
+                    self.wind_speed = None
+                    self.illumination = None
+                    return False # Critical failure
+
+            # Fetch valve data
+            valve_discovery_ok, valve_fetch_ok = await self._fetch_valves_data()
+            if not valve_discovery_ok or not valve_fetch_ok:
+                any_fetch_error = True # Mark that an error occurred
+                overall_success = False # Fetch wasn't fully successful
+                if not valve_discovery_ok:
+                    logger.error("Valve discovery failed, skipping further fetches in this cycle.")
+                    # Don't clear cache here, discovery method handled it
+                    # return False # Or maybe continue to weather? Decided to stop for now.
+                    # If only fetch failed, cache will be cleared later if needed.
+
+            # Fetch weather data (only if valve discovery was ok or we want to proceed anyway)
+            # Let's proceed even if valve fetch failed, but not if discovery failed
+            if valve_discovery_ok:
+                weather_discovery_ok, weather_fetch_ok = await self._fetch_weather_data()
+                if not weather_discovery_ok or not weather_fetch_ok:
+                    any_fetch_error = True # Mark that an error occurred
+                    overall_success = False # Fetch wasn't fully successful
+                    if not weather_discovery_ok:
+                         logger.error("Weather sensor discovery failed.")
+                         # Don't clear sensor details here, discovery method handled it
+
+            # If any part of the fetch process had an error, clear relevant caches/details
+            if any_fetch_error:
+                logger.warning("HomematicService: Clearing caches/details due to fetch error(s) in valves or weather.")
+                if not valve_fetch_ok: # Clear valve cache if its fetch failed
+                    self._valve_device_list = None
+                if not weather_fetch_ok and self._weather_sensor_addr: # Clear weather details if its fetch failed (and we had details)
+                    self._weather_sensor_addr = None
+                    self._weather_sensor_iface = None
+
+            return overall_success
 
         except NetworkError as ne:
             # Specific handling for critical network errors during fetch
@@ -537,7 +714,12 @@ class HomematicDataService:
             # self.set_paused(True) # <- REMOVED THIS CALL that caused the error
             # --- END CHANGE --- 
             self._valve_device_list = None # Clear cache
+            self._weather_sensor_addr = None # Clear sensor details
+            self._weather_sensor_iface = None
             self.reporting_valves = -1 # Set error state
+            self.temperature = None # Reset weather data
+            self.wind_speed = None
+            self.illumination = None
             self.max_valve_room_name = "Unknown"
             return False # Indicate failure and let the task end naturally
         except Exception as e:
@@ -545,7 +727,12 @@ class HomematicDataService:
             # Optional: Consider pausing here too for general errors?
             # self.set_paused(True)
             self._valve_device_list = None # Clear cache on any exception
+            self._weather_sensor_addr = None # Clear sensor details
+            self._weather_sensor_iface = None
             self.reporting_valves = -1
+            self.temperature = None # Reset weather data
+            self.wind_speed = None
+            self.illumination = None
             self.max_valve_room_name = "Unknown" # Reset on exception
             return False
 
@@ -564,6 +751,8 @@ class HomematicDataService:
         """Clears the internal device cache, forcing a rediscovery on the next fetch."""
         logger.info("HomematicService: Force rescan requested. Clearing device cache.")
         self._valve_device_list = None
+        self._weather_sensor_addr = None # <<<--- Clear weather sensor details too ---
+        self._weather_sensor_iface = None  # <<<-------------------------------------->
         # Optionally, reset last_fetch to trigger update sooner?
         # self.last_fetch = 0
     # <<<---------------------------->

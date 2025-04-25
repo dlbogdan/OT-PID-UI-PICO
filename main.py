@@ -20,12 +20,13 @@ from initialization import initialize_hardware, initialize_services, setup_gui
 
 from managers.manager_otgw import OpenThermManager
 from gui import GUIManager
-
+from controller_pid import PIDController # Import the PID controller
 
 # Import tasks from the new file
 from main_tasks import (
     wifi_task, led_task, homematic_task, poll_buttons_task,
-    error_rate_limiter_task, main_status_task
+    error_rate_limiter_task, main_status_task,
+    pid_control_task # Import the new task
 )
 
 
@@ -48,13 +49,25 @@ Kp, Ki, Kd, OUT = 0.0, 0.0, 0.0, 54.0
 #  Background task registration
 # --------------------------------------------------------------------------- #
 
-def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid):
+def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid=None, interval_s=None):
     # Tasks are now imported from main_tasks.py
-    for coro in (
-        wifi_task(wifi), led_task(led), homematic_task(hm),
-        poll_buttons_task(hid), main_status_task(hm, wifi, led),
-        error_rate_limiter_task(hm, wifi, led),ot_manager.start()
-    ):
+    tasks_to_schedule = [
+        wifi_task(wifi), 
+        led_task(led), 
+        homematic_task(hm),
+        poll_buttons_task(hid), 
+        main_status_task(hm, wifi, led),
+        error_rate_limiter_task(hm, wifi, led),
+        ot_manager.start()
+    ]
+    # Conditionally add the PID task if it exists
+    if pid is not None and interval_s is not None:
+        logger.info("Scheduling PID control task.")
+        tasks_to_schedule.append(pid_control_task(pid, hm, ot_manager, interval_s))
+    else:
+        logger.warning("PID instance or interval not available, PID task not scheduled.")
+        
+    for coro in tasks_to_schedule:
         loop.create_task(coro)
 
 
@@ -110,19 +123,52 @@ def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid):
 
 async def main():  # noqa: C901 (Complexity will be reduced)
     # Initialization 
+    pid_instance = None # Define outside try block
     try:
         display, led, buttons, opentherm = initialize_hardware()
         cfg_mgr, cfg, wifi, homematic = initialize_services()
         gui = GUIManager(display, buttons) 
         setup_gui(gui, cfg_mgr, cfg, wifi, homematic, opentherm)
+
+        # Instantiate PID Controller
+        logger.info("Instantiating PID Controller...")
+        pid_instance = PIDController(
+            kp=cfg["pid_kp"],
+            ki=cfg["pid_ki"],
+            kd=cfg["pid_kd"],
+            setpoint=cfg["pid_setpoint"],
+            output_min=35.0, # Or load from config if needed
+            output_max=cfg["ot_max_heating_setpoint"], # Use OT max heating setpoint
+            integral_min=None, # Keep default for now
+            integral_max=None, # Keep default for now
+            ff_wind_coeff=cfg["pid_ff_wind"],
+            ff_temp_coeff=cfg["pid_ff_temp"],
+            ff_sun_coeff=cfg["pid_ff_sun"],
+            ff_wind_interaction_coeff=cfg["pid_ff_wind_interact"],
+            base_temp_ref_outside=cfg["pid_base_temp_ref"],
+            base_temp_boiler=cfg["pid_base_temp_boiler"],
+            valve_input_min=cfg["pid_valve_min"],
+            valve_input_max=cfg["pid_valve_max"],
+            time_factor=1.0 # Use real-time for actual operation
+        )
+        logger.info("PID Controller instantiated.")
+
     except Exception as e: # Catch init errors
         logger.fatal("Initialization", str(e),resetmachine=not DEVELOPMENT_MODE)
+        # Ensure pid_instance remains None if initialization failed before it
 
     # Start Async Event Loop and Schedule Tasks
     loop = asyncio.get_event_loop()
-    schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons)
+    # Pass pid_instance and interval to schedule_tasks if pid was created
+    if pid_instance:
+        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons, pid=pid_instance, interval_s=cfg["pid_interval_s"])
+    else:
+        # Schedule without PID if it failed to initialize
+        logger.error("PID instance not created, scheduling tasks without PID control.")
+        # simplified schedule_tasks call might be needed here if pid/interval are required args
+        # For now, assume schedule_tasks handles optional pid/interval or modify it next.
+        pass # Or call a version of schedule_tasks that doesn't need pid
 
-    # set_initial_ot_state(opentherm, cfg) # todo: we shouldn't need this
     # Main Loop
     try:
         logger.info("Starting main event loop...")

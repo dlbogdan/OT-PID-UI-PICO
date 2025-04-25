@@ -17,9 +17,9 @@ if __name__ == "__main__":
 
     # Simulate initial conditions
     wind = 4.0      
-    outside_t = 10.0  
-    sun = 0.0      
-    max_valve = 10.0     
+    outside_t = -14  
+    sun = 15000      
+    max_valve = 10     
 
     print(f"Initial PID: Kp={pid.kp}, Ki={pid.ki}, Kd={pid.kd}, Setpoint={pid.setpoint}")
     print(f"FF Coeffs: Temp={pid.ff_temp_coeff}, Wind={pid.ff_wind_coeff}, Sun={pid.ff_sun_coeff}, WindInteract={pid.ff_wind_interaction_coeff}") 
