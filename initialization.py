@@ -107,6 +107,12 @@ def load_config(cfg_mgr):
         "ot_enable_controller": _bool("OT", "ENABLE_CONTROLLER"),
         "ot_enable_heating": _bool("OT", "ENABLE_HEATING"),
         "ot_enable_dhw": _bool("OT", "ENABLE_DHW"),
+        # Auto Heating Control (New)
+        "auto_heat_enable": _bool("AUTOH", "ENABLE", True),
+        "auto_heat_disable_temp": float(cfg_mgr.get_value("AUTOH", "DISABLE_TEMP", 20.0)),
+        "auto_heat_disable_valve": float(cfg_mgr.get_value("AUTOH", "DISABLE_VALVE", 6.0)),
+        "auto_heat_enable_temp": float(cfg_mgr.get_value("AUTOH", "ENABLE_TEMP", 17.0)),
+        "auto_heat_enable_valve": float(cfg_mgr.get_value("AUTOH", "ENABLE_VALVE", 8.0)),
         # MQTT (Keep even if unused for now, might be needed later)
         "mqtt_broker": cfg_mgr.get_value("MQTT", "BROKER"),
         "mqtt_port": int(cfg_mgr.get_value("MQTT", "PORT", 1883)),
@@ -198,6 +204,13 @@ def setup_gui(gui, cfg_mgr, cfg, wifi, hm, ot_manager):
             BoolField("Takeover Control", cfg.get("ot_enable_controller", False), lambda v: save("OT", "ENABLE_CONTROLLER", v)),
             BoolField("Enable Heating", cfg.get("ot_enable_heating", False), lambda v: save("OT", "ENABLE_HEATING", v)),
             BoolField("Enable DHW", cfg.get("ot_enable_dhw", False), lambda v: save("OT", "ENABLE_DHW", v)),
+        ]),
+        Menu("Auto Heating", [ # New Menu for Auto Heating
+            BoolField("Enable Auto", cfg.get("auto_heat_enable", True), lambda v: save("AUTOH", "ENABLE", v)),
+            FloatField("Disable Temp >=", cfg.get("auto_heat_disable_temp", 20.0), lambda v: save("AUTOH", "DISABLE_TEMP", v)),
+            FloatField("Disable Valve <", cfg.get("auto_heat_disable_valve", 6.0), lambda v: save("AUTOH", "DISABLE_VALVE", v)),
+            FloatField("Enable Temp <", cfg.get("auto_heat_enable_temp", 17.0), lambda v: save("AUTOH", "ENABLE_TEMP", v)),
+            FloatField("Enable Valve >", cfg.get("auto_heat_enable_valve", 8.0), lambda v: save("AUTOH", "ENABLE_VALVE", v)),
         ]),
         Menu("Device", [
             Action("View Log", lambda: gui.switch_mode("logview")),

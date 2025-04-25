@@ -26,7 +26,7 @@ from controller_pid import PIDController # Import the PID controller
 from main_tasks import (
     wifi_task, led_task, homematic_task, poll_buttons_task,
     error_rate_limiter_task, main_status_task,
-    pid_control_task # Import the new task
+    pid_control_task, log_pid_output_task # Import the new task
 )
 
 
@@ -49,7 +49,7 @@ Kp, Ki, Kd, OUT = 0.0, 0.0, 0.0, 54.0
 #  Background task registration
 # --------------------------------------------------------------------------- #
 
-def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid=None, interval_s=None):
+def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid=None, interval_s=None, cfg=None):
     # Tasks are now imported from main_tasks.py
     tasks_to_schedule = [
         wifi_task(wifi), 
@@ -61,9 +61,12 @@ def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid=None, interval_s
         ot_manager.start()
     ]
     # Conditionally add the PID task if it exists
-    if pid is not None and interval_s is not None:
+    if pid is not None and interval_s is not None and cfg is not None:
         logger.info("Scheduling PID control task.")
-        tasks_to_schedule.append(pid_control_task(pid, hm, ot_manager, interval_s))
+        tasks_to_schedule.append(pid_control_task(pid, hm, ot_manager, interval_s, cfg))
+        # Schedule the new logging task
+        logger.info("Scheduling PID output logging task.")
+        tasks_to_schedule.append(log_pid_output_task(pid)) # Default interval is 60s
     else:
         logger.warning("PID instance or interval not available, PID task not scheduled.")
         
@@ -162,7 +165,7 @@ async def main():  # noqa: C901 (Complexity will be reduced)
     loop = asyncio.get_event_loop()
     # Pass pid_instance and interval to schedule_tasks if pid was created
     if pid_instance:
-        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons, pid=pid_instance, interval_s=cfg["pid_interval_s"])
+        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons, pid=pid_instance, interval_s=cfg["pid_interval_s"], cfg=cfg)
     else:
         # Schedule without PID if it failed to initialize
         logger.error("PID instance not created, scheduling tasks without PID control.")

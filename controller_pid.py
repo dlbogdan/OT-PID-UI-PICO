@@ -76,6 +76,7 @@ class PIDController:
         self._integral = 0.0
         self._previous_error = 0.0
         self._last_time_ref = None # Reference point for dt calculation (ticks or monotonic seconds)
+        self.last_output = None # Store the last calculated output
 
     def _calculate_feed_forward(self, wind_speed, outside_temp, sun_illumination):
         """Calculates the feed-forward base boiler temperature, including wind interaction."""
@@ -182,6 +183,7 @@ class PIDController:
 
         # Update state for next iteration
         self._previous_error = error
+        self.last_output = output_temp # Store the latest output
 
         return output_temp
 
@@ -190,6 +192,7 @@ class PIDController:
         self._integral = 0.0
         self._previous_error = 0.0
         self._last_time_ref = None # Reset time reference
+        self.last_output = None # Reset last output as well
         print("PID controller reset.")
 
     def set_gains(self, kp, ki, kd):
