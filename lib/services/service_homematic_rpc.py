@@ -672,12 +672,16 @@ class HomematicDataService:
         Returns True if all discoveries succeeded or weren't needed,
         False if a critical discovery failed.
         """
+        valves_discovery_success = True
+        weather_discovery_success = True
+        
         # Discovery for valve devices
         if self._valve_device_list is None:
             valves_discovery_success = await self._discover_valve_devices_and_rooms()
             if not valves_discovery_success:
                 # Discovery failed due to communication error
-                self.reporting_valves = -1 # Keep error state 
+                self.reporting_valves = -1 # Keep error state
+                # Don't return immediately, check weather discovery too
         
         # Discovery for weather sensor
         if self._weather_sensor is None:
@@ -686,10 +690,12 @@ class HomematicDataService:
                 # Discovery failed due to communication error
                 self.has_weather_data = False
                 # Continue even if weather sensor discovery fails
-        if valves_discovery_success or weather_discovery_success:   # Return True if either discovery succeeded
-            return True
-        else:
-            return False
+        
+        # Return True if either discovery succeeded (or wasn't needed)
+        # If a critical discovery (valves) failed, valves_discovery_success will be False.
+        # We only return False if *both* were attempted and failed, or if valve discovery failed.
+        # The logic implies we want to return True unless valve discovery failed.
+        return valves_discovery_success or weather_discovery_success
 
     async def fetch_data(self):
         """
