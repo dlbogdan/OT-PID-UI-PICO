@@ -2,7 +2,7 @@ import json
 import time
 from machine import reset
 
-class Logger:
+class Logger: #singleton
     """Manages error logging with minimal flash writes."""
     _instance = None
     _initialized = False  # Flag to ensure __init__ runs only once

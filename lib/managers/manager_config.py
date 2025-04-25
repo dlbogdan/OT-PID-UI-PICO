@@ -6,7 +6,6 @@ from managers.manager_logger import Logger
 
 logger = Logger()
 
-
 # --- Configuration Management ---
 # class ConfigManager: ... (NO CHANGES NEEDED) ...
 class ConfigManager:

@@ -98,7 +98,7 @@ def load_config(cfg_mgr):
         "ccu_user": cfg_mgr.get_value("CCU3", "USER", ""),
         "ccu_pass": cfg_mgr.get_value("CCU3", "PASS", ""),
         "valve_type": cfg_mgr.get_value("CCU3", "VALVE_DEVTYPE", "HmIP-eTRV"),
-        "weather_sensor_type": cfg_mgr.get_value("CCU3", "WEATHER_SENSOR_DEVTYPE", "HmIP-WTH"),
+        "weather_type": cfg_mgr.get_value("CCU3", "WEATHER_DEVTYPE", "HmIP-SWO"),
         # OpenTherm
         "ot_max_heating_setpoint": float(cfg_mgr.get_value("OT", "MAX_HEATING_SETPOINT", 72.0)),
         "ot_manual_heating_setpoint": float(cfg_mgr.get_value("OT", "MANUAL_HEATING_SETPOINT", 55.0)),
@@ -187,6 +187,7 @@ def setup_gui(gui, cfg_mgr, cfg, wifi, hm, ot_manager):
             TextField("CCU3 User", cfg["ccu_user"], lambda v: save("CCU3", "USER", v)),
             TextField("CCU3 Pass", cfg["ccu_pass"], lambda v: save("CCU3", "PASS", v)),
             TextField("Valve Type", cfg["valve_type"], lambda v: save("CCU3", "VALVE_DEVTYPE", v)),
+            TextField("Weather Type", cfg["weather_type"], lambda v: save("CCU3", "WEATHER_DEVTYPE", v)),
             Action("Rescan", hm.force_rescan), # Assuming hm has force_rescan
         ]),
         Menu("OpenTherm", [
@@ -238,9 +239,14 @@ def setup_gui(gui, cfg_mgr, cfg, wifi, hm, ot_manager):
     # Page 6: Room with max valve opening
     mon.add_page(Page(lambda: f"Room: {hm.max_valve_room_name}",
                        lambda: f"Max Valve: {hm.max_valve:.1f}%" if hm.is_ccu_connected() else "(CCU Offline)"))
-    # Page 7: Weather Data
-    mon.add_page(Page(lambda: f"T {hm.temperature:.1f}C" if hm.temperature is not None else "T --",
-                       lambda: f"W {hm.wind_speed:.1f} L {hm.illumination:.0f}" if hm.wind_speed is not None and hm.illumination is not None else "W -- L --"))
+    
+    # Page 7: Weather sensor data
+    mon.add_page(Page(lambda: f"Temp: {hm.temperature:.1f}C" if hm.has_weather_data and hm.temperature is not None else "Temperature: N/A",
+                       lambda: f"Wind: {hm.wind_speed:.1f}km/h" if hm.has_weather_data and hm.wind_speed is not None else "Wind: N/A"))
+    
+    # Page 8: Weather sensor illumination
+    mon.add_page(Page(lambda: f"Sun: {hm.illumination:.0f}lux" if hm.has_weather_data and hm.illumination is not None else "Illumination: N/A",
+                       lambda: f"Weather: {'Online' if hm.has_weather_data else 'Offline'}"))
 
     gui.add_mode("monitoring", mon)
 
@@ -264,7 +270,8 @@ def initialize_services():
     wifi = WiFiManager(cfg["ssid"], cfg["wifi_pass"], unique_hardware_name()[:15])
     hm = HomematicDataService(
         f"http://{cfg['ccu_ip']}/api/homematic.cgi",
-        cfg["ccu_user"], cfg["ccu_pass"], cfg["valve_type"], cfg["weather_sensor_type"]
+        cfg["ccu_user"], cfg["ccu_pass"], cfg["valve_type"],
+        weather_device_type=cfg["weather_type"]
     )
 
     logger.info("Services initialised.")

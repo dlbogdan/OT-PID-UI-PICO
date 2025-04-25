@@ -157,6 +157,7 @@ async def main():  # noqa: C901 (Complexity will be reduced)
         logger.fatal("Initialization", str(e),resetmachine=not DEVELOPMENT_MODE)
         # Ensure pid_instance remains None if initialization failed before it
 
+
     # Start Async Event Loop and Schedule Tasks
     loop = asyncio.get_event_loop()
     # Pass pid_instance and interval to schedule_tasks if pid was created

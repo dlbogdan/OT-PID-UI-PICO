@@ -4,6 +4,7 @@ from machine import Timer
 
 from managers.manager_logger import Logger
 
+
 logger = Logger()
 
 class DisplayController:

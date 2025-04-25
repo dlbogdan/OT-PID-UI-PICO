@@ -63,6 +63,7 @@ OT_FAULT_FLAGS_LB = {
 KEEP_ALIVE_INTERVAL = 50 # As per doc, commands like CS > 8 must be resent every minute
 BOILER_TIMEOUT_S = 60 # Seconds without a boiler message to be considered disconnected
 
+
 class OpenThermController():
     """
     Asynchronous controller for an OpenTherm Gateway (OTGW) via UART.

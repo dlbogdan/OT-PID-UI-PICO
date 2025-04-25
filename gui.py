@@ -801,6 +801,7 @@ class MonitoringMode(UIMode):
 
         return handled
 
+
     # --- Refresh Task ---
     async def _refresh_task_coro(self, manager):
         """Coroutine that periodically triggers a re-render."""

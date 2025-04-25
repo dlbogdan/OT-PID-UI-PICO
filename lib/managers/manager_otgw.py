@@ -15,7 +15,6 @@ CMD_STATUS_ERROR = "error"
 CMD_STATUS_VALIDATION_ERROR = "validation_error"
 
 
-
 class OpenThermManager:
     """
     Manages interaction with OpenThermController, providing a non-blocking

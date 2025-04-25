@@ -52,6 +52,7 @@ def print_menu():
     error_manager.info("M. Show Menu")
     error_manager.info("Enter choice:")
 
+
 # Changed function signature to accept manager
 # Reverted: No longer async, as manager methods are likely synchronous wrappers
 def process_command(cmd, manager: OpenThermManager):
