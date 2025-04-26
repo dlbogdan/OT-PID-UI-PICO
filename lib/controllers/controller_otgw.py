@@ -422,14 +422,19 @@ class OpenThermController():
     async def relinquish_control(self):
         """Gives control back to thermostat (CS=0). Returns (status_code, response_data)."""
         logger.info("Attempting to relinquish control (CS=0)...")
+        # Set the controller to inactive before sending the command to avoid race condition
+        self._is_controller_active = False
         status_code, response_data = await self._send_command("CS", 0)
         if status_code == OTGW_RESPONSE_OK:
-            logger.info("Successfully relinquished control (CS=0 sent).")
-            self._is_controller_active = False
+            # Send CH=0 to handover to thermostat
+            await self.handover_central_heating()
+            logger.info("Successfully relinquished control (CS=0 & CH=0 sent).")
             self._control_setpoint_override = 0.0
             self._control_setpoint2_override = 0.0
         else:
+            # If the command fails, set the controller to active again
             logger.error(f"Failed to set CS=0 (Status: {status_code}, Resp: {response_data}). May still be controlling.")
+            self._is_controller_active = True
 
         return status_code, response_data
 
@@ -461,6 +466,12 @@ class OpenThermController():
              # Allow sending anyway?
              # return OTGW_RESPONSE_OR, "Percentage out of range"
          return await self._send_command("MM", percentage)
+
+    async def handover_central_heating(self):
+        """Sets CH=0. Returns (status_code, response_data)."""
+        # purposely not checking if controller is active, 
+        # as we want to handover usually to be made when controller is already inactive
+        return await self._send_command("CH", 0)
 
     async def set_central_heating(self, enabled: bool):
         """Sets CH. Returns (status_code, response_data)."""

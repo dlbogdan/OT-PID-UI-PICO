@@ -82,6 +82,18 @@ class PIDController:
         self._last_time_ref = None # Reference point for dt calculation (ticks or monotonic seconds)
         self.last_output = None # Store the last calculated output
 
+    def get_output_min(self):
+        return self.output_min
+
+    def get_output_max(self):
+        return self.output_max
+
+    def set_output_min(self, output_min):
+        self.output_min = output_min
+
+    def set_output_max(self, output_max):
+        self.output_max = output_max
+
     def _calculate_feed_forward(self, wind_speed, outside_temp, sun_illumination):
         """Calculates the feed-forward base boiler temperature, including wind interaction."""
         # Temperature adjustment (colder outside -> higher boiler temp)

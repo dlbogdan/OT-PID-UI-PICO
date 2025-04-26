@@ -43,8 +43,8 @@ class ConfigManager:
         """Save the current configuration to the JSON config file."""
         try:
             with open(self.filename_config, 'w') as f:
-                # Add type: ignore for indent issue
-                json.dump(self.config, f, indent=4) # type: ignore
+                # Use positional arguments only for MicroPython compatibility
+                json.dump(self.config, f) # No keyword args
             logger.info(f"Config successfully saved to {self.filename_config}") 
             return True
         except Exception as e:
@@ -107,8 +107,8 @@ def factory_reset(display, led, config_manager, hm_service):
     logger.info(f"Writing current factory defaults to {factory_config_file}...")
     try:
         with open(factory_config_file, 'w') as f_factory:
-            # Add type: ignore for indent issue
-            json.dump(DEFAULT_FACTORY_CONFIG, f_factory, indent=4) # type: ignore
+            # Use positional arguments only for MicroPython compatibility
+            json.dump(DEFAULT_FACTORY_CONFIG, f_factory) # No keyword args
         logger.info(f"Successfully wrote factory defaults to {factory_config_file}")
     except Exception as e_write_factory:
         logger.error(f"FATAL: Could not write factory config {factory_config_file}: {e_write_factory}")
