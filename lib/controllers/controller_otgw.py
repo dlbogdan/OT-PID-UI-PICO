@@ -116,7 +116,7 @@ class OpenThermController():
                 if not line: # or len(line) == 0
                     continue
 
-                logger.trace(f"OTGW RX: {line}") # TRACE (Keep this standard log)
+                logger.debug(f"OTGW RX: {line}") #  (Keep this standard log)
 
                 # --- Message Parsing ---
                 # Check for command response first (XX: Data)
@@ -307,7 +307,7 @@ class OpenThermController():
         async with self._command_lock:
             # Use only carriage return as terminator, per OTGW docs
             cmd_str = f"{cmd_code}={value}\r"
-            logger.info(f"OTGW TX: {cmd_str.strip()}")
+            logger.debug(f"OTGW TX: {cmd_str.strip()}")
 
             # Prepare for response
             response_event = uasyncio.Event()
