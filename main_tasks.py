@@ -261,9 +261,9 @@ async def _handle_heating_control(cfg_mgr, pid, hm, ot_manager):
 # --- End Refactored PID Control Helper Functions ---
 
 
-async def pid_control_task(pid, hm, ot_manager, interval_s, cfg_mgr):
+async def pid_control_task(pid, hm, ot_manager, cfg_mgr):
     """Periodically syncs OT state and applies PID or manual control based on config."""
-    logger.info(f"Starting PID/Manual Control task with interval {interval_s}s.")
+    logger.info(f"Starting PID/Manual Control task with interval")
     await asyncio.sleep(5) # Initial delay
 
     while True:
@@ -281,19 +281,19 @@ async def pid_control_task(pid, hm, ot_manager, interval_s, cfg_mgr):
                 logger.debug("Takeover OFF: Skipping heating control actions.")
 
             # Use actual sleep interval (already retrieved as int in main.py)
-            await asyncio.sleep(interval_s)
+            await asyncio.sleep(30)
 
         except Exception as e:
             logger.error(f"PID/Control Task Error: {e}")
             # Avoid rapid looping on error
-            await asyncio.sleep(interval_s)
+            await asyncio.sleep(30)
 
 
-async def log_pid_output_task(pid, interval_s=60):
+async def log_pid_output_task(pid):
     """Periodically logs the last calculated PID output temperature."""
-    logger.info(f"Starting PID output logging task with interval {interval_s}s.")
+    logger.info(f"Starting PID output logging task.")
     # Initial delay aligns potentially with first PID calculation
-    await asyncio.sleep(interval_s)
+    await asyncio.sleep(60)
 
     while True:
         try:
@@ -303,9 +303,9 @@ async def log_pid_output_task(pid, interval_s=60):
             else:
                 logger.info("PID Last Output: None (PID not run yet?)")
             
-            await asyncio.sleep(interval_s)
+            await asyncio.sleep(60)
 
         except Exception as e:
             logger.error(f"PID Log Task Error: {e}")
             # Avoid rapid looping on error
-            await asyncio.sleep(interval_s) 
+            await asyncio.sleep(60) 

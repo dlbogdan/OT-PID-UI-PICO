@@ -1,4 +1,4 @@
-from controller_pid import PIDController
+from controllers.controller_pid import PIDController
 import time
 
 # Example Usage (for testing purposes)

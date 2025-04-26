@@ -61,10 +61,10 @@ class ConfigManager:
             # Section or key missing, use default
             logger.info(f"Config key '{section}.{key}' not found. Setting default: {repr(default)}")
             # Set the default value (with its original type) and save
-            self.set_value(section, key, default) # set_value handles save
+            self.set(section, key, default) # set_value handles save
             return default
 
-    def set_value(self, section: str, key: str, value: Any):
+    def set(self, section: str, key: str, value: Any):
         """Sets the value (preserving type), saves config if changed."""
         # Ensure section exists
         if section not in self.config or not isinstance(self.config[section], dict):
