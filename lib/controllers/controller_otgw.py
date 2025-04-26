@@ -116,7 +116,7 @@ class OpenThermController():
                 if not line: # or len(line) == 0
                     continue
 
-                logger.debug(f"OTGW RX: {line}") # DEBUG (Keep this standard log)
+                logger.trace(f"OTGW RX: {line}") # TRACE (Keep this standard log)
 
                 # --- Message Parsing ---
                 # Check for command response first (XX: Data)

@@ -73,150 +73,95 @@ def initialize_hardware():
 
 
 # --------------------------------------------------------------------------- #
-#  Configuration Loading
+#  Configuration Loading - Now handled internally by ConfigManager
 # --------------------------------------------------------------------------- #
-
-def load_config(cfg_mgr):
-    """Load configuration values from the ConfigManager."""
-    logger.info("Loading configuration...")
-
-    def _bool(section, key, default=False):
-        raw_value = cfg_mgr.get_value(section, key, default)
-        # logger.info(f"DEBUG _bool: Section='{section}', Key='{key}', RawValue='{raw_value}' (Type: {type(raw_value)})") # Keep commented unless debugging
-        value_str = str(raw_value).strip().lower()
-        result = value_str == "true"
-        # logger.info(f"DEBUG _bool: Processed Value='{value_str}', Result={result}") # Keep commented unless debugging
-        return result
-
-    cfg = {
-        "debug": cfg_mgr.get_value("DEVICE", "DEBUG", 1),
-        # Wi‑Fi
-        "ssid": cfg_mgr.get_value("WIFI", "SSID"),
-        "wifi_pass": cfg_mgr.get_value("WIFI", "PASS"),
-        # Homematic
-        "ccu_ip": cfg_mgr.get_value("CCU3", "IP", "0.0.0.0"),
-        "ccu_user": cfg_mgr.get_value("CCU3", "USER", ""),
-        "ccu_pass": cfg_mgr.get_value("CCU3", "PASS", ""),
-        "valve_type": cfg_mgr.get_value("CCU3", "VALVE_DEVTYPE", "HmIP-eTRV"),
-        "weather_type": cfg_mgr.get_value("CCU3", "WEATHER_DEVTYPE", "HmIP-SWO"),
-        # OpenTherm
-        "ot_max_heating_setpoint": float(cfg_mgr.get_value("OT", "MAX_HEATING_SETPOINT", 72.0)),
-        "ot_manual_heating_setpoint": float(cfg_mgr.get_value("OT", "MANUAL_HEATING_SETPOINT", 55.0)),
-        "ot_dhw_setpoint": float(cfg_mgr.get_value("OT", "DHW_SETPOINT", 50.0)),
-        "ot_enable_controller": _bool("OT", "ENABLE_CONTROLLER"),
-        "ot_enable_heating": _bool("OT", "ENABLE_HEATING"),
-        "ot_enable_dhw": _bool("OT", "ENABLE_DHW"),
-        # Auto Heating Control (New)
-        "auto_heat_enable": _bool("AUTOH", "ENABLE", True),
-        "auto_heat_off_temp": float(cfg_mgr.get_value("AUTOH", "OFF_TEMP", 20.0)),
-        "auto_heat_off_valve": float(cfg_mgr.get_value("AUTOH", "OFF_VALVE_LEVEL", 6.0)),
-        "auto_heat_on_temp": float(cfg_mgr.get_value("AUTOH", "ON_TEMP", 17.0)),
-        "auto_heat_on_valve": float(cfg_mgr.get_value("AUTOH", "ON_VALVE_LEVEL", 8.0)),
-        # MQTT (Keep even if unused for now, might be needed later)
-        "mqtt_broker": cfg_mgr.get_value("MQTT", "BROKER"),
-        "mqtt_port": int(cfg_mgr.get_value("MQTT", "PORT", 1883)),
-        "mqtt_user": cfg_mgr.get_value("MQTT", "USER", ""),
-        "mqtt_pass": cfg_mgr.get_value("MQTT", "PASS", ""),
-        "mqtt_base_topic": cfg_mgr.get_value("MQTT", "BASE_TOPIC", "home/ot-controller"),
-        # PID Controller
-        "pid_kp": float(cfg_mgr.get_value("PID", "KP", 0.05)),
-        "pid_ki": float(cfg_mgr.get_value("PID", "KI", 0.002)),
-        "pid_kd": float(cfg_mgr.get_value("PID", "KD", 0.01)),
-        "pid_setpoint": float(cfg_mgr.get_value("PID", "SETPOINT", 25.0)),
-        "pid_interval_s": int(cfg_mgr.get_value("PID", "UPDATE_INTERVAL_SEC", 30)),
-        "pid_valve_min": float(cfg_mgr.get_value("PID", "VALVE_MIN", 8.0)),
-        "pid_valve_max": float(cfg_mgr.get_value("PID", "VALVE_MAX", 70.0)),
-        "pid_ff_wind": float(cfg_mgr.get_value("PID", "FF_WIND_COEFF", 0.1)),
-        "pid_ff_wind_interact": float(cfg_mgr.get_value("PID", "FF_WIND_INTERACTION_COEFF", 0.008)),
-        "pid_ff_temp": float(cfg_mgr.get_value("PID", "FF_TEMP_COEFF", 1.1)),
-        "pid_ff_sun": float(cfg_mgr.get_value("PID", "FF_SUN_COEFF", 0.0001)),
-        "pid_base_temp_ref": float(cfg_mgr.get_value("PID", "BASE_TEMP_REF_OUTSIDE", 10.0)),
-        "pid_base_temp_boiler": float(cfg_mgr.get_value("PID", "BASE_TEMP_BOILER", 45.0)),
-    }
-    logger.info("Configuration loaded.")
-    return cfg
-
 
 # --------------------------------------------------------------------------- #
 #  GUI Setup
 # --------------------------------------------------------------------------- #
 
-def setup_gui(gui, cfg_mgr, cfg, wifi, hm, ot_manager):
+def setup_gui(gui, cfg_mgr, wifi, hm, ot_manager, pid_instance=None):
     """Builds the menu structure and sets up GUI modes."""
     logger.info("Setting up GUI...")
-
-    # Define save callback here as it needs cfg_mgr and potentially ot_manager
+    
+    # Define save callback - calls cfg_mgr.set_value and handles PID gain updates
     def save(sec, key, val):
-        logger.info(f"Saving config: Section={sec}, Key={key}, Value={val}")
+        logger.info(f"Saving config via GUI: Section={sec}, Key={key}, Value={val}")
         cfg_mgr.set_value(sec, key, val)
-        cfg_mgr.save_config()
-        logger.info("Config saved.")
+        logger.info(f"Config set for {sec}.{key}.")
 
-        # Update runtime state via managers
-        if sec == "OT":
+        # --- Handle immediate PID gain updates --- 
+        if pid_instance and sec == "PID" and key in ["KP", "KI", "KD"]:
             try:
-                if key == "ENABLE_CONTROLLER":
-                     ot_manager.take_control() if val else ot_manager.relinquish_control()
-                elif key == "ENABLE_HEATING":
-                     ot_manager.set_central_heating(val)
-                elif key == "ENABLE_DHW":
-                     ot_manager.set_hot_water_mode(1 if val else 0)
-                elif key == "MANUAL_HEATING_SETPOINT":
-                    ot_manager.set_control_setpoint(float(val))
-                elif key == "DHW_SETPOINT":
-                    ot_manager.set_dhw_setpoint(float(val))
-                elif key == "MAX_HEATING_SETPOINT":
-                    ot_manager.set_max_ch_setpoint(float(val))
-                logger.info(f"OT state update for {key} applied.")
+                # Re-read all gains from config after saving the single key
+                kp = cfg_mgr.get("PID", "KP", 0.05)
+                ki = cfg_mgr.get("PID", "KI", 0.002)
+                kd = cfg_mgr.get("PID", "KD", 0.01)
+                logger.info(f"Applying updated PID gains: Kp={kp}, Ki={ki}, Kd={kd}")
+                pid_instance.set_gains(kp, ki, kd)
             except Exception as e:
-                logger.error(f"Failed to apply OT setting {key}={val}: {e}")
+                logger.error(f"Failed to apply PID gains update: {e}")
+        # --- End PID gain update --- 
 
     def save_and_reboot():
         gui.display.show_message("Action", "Saving & Reboot")
-        try:
-            cfg_mgr.save_config()
+        if not cfg_mgr.save_config(): # Try one last save
+            logger.error("Failed to save config before reboot.")
+        else:
             logger.info("Config saved before reboot.")
-        except Exception as e:
-            logger.error(f"Failed to save config before reboot: {e}")
         time.sleep(1)
         reset()
 
-    # --- Build Menu Structure --- # 
+    # --- Build Menu Structure (using cfg_mgr.get) --- # 
     menu_items = [
         Menu("Network", [
-            TextField("WiFi SSID", cfg["ssid"], lambda v: save("WIFI", "SSID", v)),
-            TextField("WiFi Pass", cfg["wifi_pass"], lambda v: save("WIFI", "PASS", v)),
+            TextField("WiFi SSID", cfg_mgr.get("WIFI", "SSID", ""), lambda v: save("WIFI", "SSID", v)),
+            TextField("WiFi Pass", cfg_mgr.get("WIFI", "PASS", ""), lambda v: save("WIFI", "PASS", v)),
         ]),
         Menu("Homematic", [
-            IPAddressField("CCU3 IP", cfg["ccu_ip"], lambda v: save("CCU3", "IP", v)),
-            TextField("CCU3 User", cfg["ccu_user"], lambda v: save("CCU3", "USER", v)),
-            TextField("CCU3 Pass", cfg["ccu_pass"], lambda v: save("CCU3", "PASS", v)),
-            TextField("Valve Type", cfg["valve_type"], lambda v: save("CCU3", "VALVE_DEVTYPE", v)),
-            TextField("Weather Type", cfg["weather_type"], lambda v: save("CCU3", "WEATHER_DEVTYPE", v)),
-            Action("Rescan", hm.force_rescan), # Assuming hm has force_rescan
+            IPAddressField("CCU3 IP", cfg_mgr.get("CCU3", "IP", "0.0.0.0"), lambda v: save("CCU3", "IP", v)),
+            TextField("CCU3 User", cfg_mgr.get("CCU3", "USER", ""), lambda v: save("CCU3", "USER", v)),
+            TextField("CCU3 Pass", cfg_mgr.get("CCU3", "PASS", ""), lambda v: save("CCU3", "PASS", v)),
+            TextField("Valve Type", cfg_mgr.get("CCU3", "VALVE_DEVTYPE", "HmIP-eTRV"), lambda v: save("CCU3", "VALVE_DEVTYPE", v)),
+            TextField("Weather Type", cfg_mgr.get("CCU3", "WEATHER_DEVTYPE", "HmIP-SWO"), lambda v: save("CCU3", "WEATHER_DEVTYPE", v)),
+            Action("Rescan", hm.force_rescan),
         ]),
         Menu("OpenTherm", [
-            # Use .get() with defaults for robustness
-            FloatField("Max Heating SP", cfg.get("ot_max_heating_setpoint", 72.0), lambda v: save("OT", "MAX_HEATING_SETPOINT", v)),
-            FloatField("Control Setpoint", cfg.get("ot_manual_heating_setpoint", 55.0), lambda v: save("OT", "MANUAL_HEATING_SETPOINT", v)),
-            FloatField("DHW Setpoint", cfg.get("ot_dhw_setpoint", 50.0), lambda v: save("OT", "DHW_SETPOINT", v)),
-            BoolField("Takeover Control", cfg.get("ot_enable_controller", False), lambda v: save("OT", "ENABLE_CONTROLLER", v)),
-            BoolField("Enable Heating", cfg.get("ot_enable_heating", False), lambda v: save("OT", "ENABLE_HEATING", v)),
-            BoolField("Enable DHW", cfg.get("ot_enable_dhw", False), lambda v: save("OT", "ENABLE_DHW", v)),
+            FloatField("Max Heating SP", cfg_mgr.get("OT", "MAX_HEATING_SETPOINT", 72.0), lambda v: save("OT", "MAX_HEATING_SETPOINT", v)),
+            FloatField("Manual Heating SP", cfg_mgr.get("OT", "MANUAL_HEATING_SETPOINT", 55.0), lambda v: save("OT", "MANUAL_HEATING_SETPOINT", v)),
+            FloatField("DHW Setpoint", cfg_mgr.get("OT", "DHW_SETPOINT", 50.0), lambda v: save("OT", "DHW_SETPOINT", v)),
+            BoolField("Takeover Control", cfg_mgr.get("OT", "ENABLE_CONTROLLER", False), lambda v: save("OT", "ENABLE_CONTROLLER", v)),
+            BoolField("Enable Heating", cfg_mgr.get("OT", "ENABLE_HEATING", False), lambda v: save("OT", "ENABLE_HEATING", v)), # Manual heating enable
+            BoolField("Enable DHW", cfg_mgr.get("OT", "ENABLE_DHW", True), lambda v: save("OT", "ENABLE_DHW", v)),
+            BoolField("Enforce DHW SP", cfg_mgr.get("OT", "ENFORCE_DHW_SETPOINT", False), lambda v: save("OT", "ENFORCE_DHW_SETPOINT", v)),
         ]),
-        Menu("Auto Heating", [ # New Menu for Auto Heating
-            BoolField("Enable Auto", cfg.get("auto_heat_enable", True), lambda v: save("AUTOH", "ENABLE", v)),
-            FloatField("Disable Temp >=", cfg.get("auto_heat_off_temp", 20.0), lambda v: save("AUTOH", "OFF_TEMP", v)),
-            FloatField("Disable Valve <", cfg.get("auto_heat_off_valve", 6.0), lambda v: save("AUTOH", "OFF_VALVE_LEVEL", v)),
-            FloatField("Enable Temp <", cfg.get("auto_heat_on_temp", 17.0), lambda v: save("AUTOH", "ON_TEMP", v)),
-            FloatField("Enable Valve >", cfg.get("auto_heat_on_valve", 8.0), lambda v: save("AUTOH", "ON_VALVE_LEVEL", v)),
+        Menu("Auto Heating", [
+            BoolField("Enable Auto", cfg_mgr.get("AUTOH", "ENABLE", True), lambda v: save("AUTOH", "ENABLE", v)),
+            FloatField("Off Temp >=", cfg_mgr.get("AUTOH", "OFF_TEMP", 20.0), lambda v: save("AUTOH", "OFF_TEMP", v)),
+            FloatField("Off Valve <", cfg_mgr.get("AUTOH", "OFF_VALVE_LEVEL", 6.0), lambda v: save("AUTOH", "OFF_VALVE_LEVEL", v)),
+            FloatField("On Temp <", cfg_mgr.get("AUTOH", "ON_TEMP", 17.0), lambda v: save("AUTOH", "ON_TEMP", v)),
+            FloatField("On Valve >", cfg_mgr.get("AUTOH", "ON_VALVE_LEVEL", 8.0), lambda v: save("AUTOH", "ON_VALVE_LEVEL", v)),
+        ]),
+        Menu("PID Config", [
+            FloatField("Prop. Gain (Kp)", cfg_mgr.get("PID", "KP", 0.05), lambda v: save("PID", "KP", v), precision=5),
+            FloatField("Integ. Gain (Ki)", cfg_mgr.get("PID", "KI", 0.002), lambda v: save("PID", "KI", v), precision=5),
+            FloatField("Deriv. Gain (Kd)", cfg_mgr.get("PID", "KD", 0.01), lambda v: save("PID", "KD", v), precision=5),
+            FloatField("Setpoint (Valve%)", cfg_mgr.get("PID", "SETPOINT", 25.0), lambda v: save("PID", "SETPOINT", v)),
+            FloatField("Valve Min %", cfg_mgr.get("PID", "VALVE_MIN", 8.0), lambda v: save("PID", "VALVE_MIN", v)),
+            FloatField("Valve Max %", cfg_mgr.get("PID", "VALVE_MAX", 70.0), lambda v: save("PID", "VALVE_MAX", v)),
+            FloatField("FF Wind Coeff", cfg_mgr.get("PID", "FF_WIND_COEFF", 0.1), lambda v: save("PID", "FF_WIND_COEFF", v)),
+            FloatField("FF Temp Coeff", cfg_mgr.get("PID", "FF_TEMP_COEFF", 1.1), lambda v: save("PID", "FF_TEMP_COEFF", v)),
+            FloatField("FF Sun Coeff", cfg_mgr.get("PID", "FF_SUN_COEFF", 0.0001), lambda v: save("PID", "FF_SUN_COEFF", v)),
+            FloatField("FF Wind Interact", cfg_mgr.get("PID", "FF_WIND_INTERACTION_COEFF", 0.008), lambda v: save("PID", "FF_WIND_INTERACTION_COEFF", v), precision=4),
+            FloatField("Base Temp Outside", cfg_mgr.get("PID", "BASE_TEMP_REF_OUTSIDE", 10.0), lambda v: save("PID", "BASE_TEMP_REF_OUTSIDE", v)),
+            FloatField("Base Temp Boiler", cfg_mgr.get("PID", "BASE_TEMP_BOILER", 45.0), lambda v: save("PID", "BASE_TEMP_BOILER", v)),
         ]),
         Menu("Device", [
             Action("View Log", lambda: gui.switch_mode("logview")),
             Action("Reset Error limiter", logger.reset_error_rate_limiter),
             Action("Reboot Device", reset),
             Action("Save & Reboot", save_and_reboot),
-            Action("Factory defaults", lambda: factory_reset(gui.display, gui.led, cfg_mgr, hm)), # Pass necessary args
+            Action("Factory defaults", lambda: factory_reset(gui.display, gui.led, cfg_mgr, hm)),
         ]),
     ]
 
@@ -277,15 +222,21 @@ def initialize_services():
     """Initialises configuration manager, loads config, and sets up services."""
     logger.info("Initialising services...")
     cfg_mgr = ConfigManager(ConfigFileName(), ConfigFileName(factory=True))
-    cfg = load_config(cfg_mgr) # Use the function defined above
-
-    wifi = WiFiManager(cfg["ssid"], cfg["wifi_pass"], unique_hardware_name()[:15])
+    
+    # Use get() method directly for initial service setup
+    wifi = WiFiManager(
+        cfg_mgr.get("WIFI", "SSID", ""), 
+        cfg_mgr.get("WIFI", "PASS", ""), 
+        unique_hardware_name()[:15]
+    )
     hm = HomematicDataService(
-        f"http://{cfg['ccu_ip']}/api/homematic.cgi",
-        cfg["ccu_user"], cfg["ccu_pass"], cfg["valve_type"],
-        weather_device_type=cfg["weather_type"]
+        f"http://{cfg_mgr.get('CCU3', 'IP', '0.0.0.0')}/api/homematic.cgi",
+        cfg_mgr.get("CCU3", "USER", ""), 
+        cfg_mgr.get("CCU3", "PASS", ""), 
+        cfg_mgr.get("CCU3", "VALVE_DEVTYPE", "HmIP-eTRV"),
+        weather_device_type=str(cfg_mgr.get("CCU3", "WEATHER_DEVTYPE", "HmIP-SWO")) # Keep str conversion for safety
     )
 
     logger.info("Services initialised.")
-    # Return managers, config, and services
-    return cfg_mgr, cfg, wifi, hm
+    # Return manager and services
+    return cfg_mgr, wifi, hm

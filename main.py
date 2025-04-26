@@ -127,34 +127,39 @@ def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid=None, interval_s
 async def main():  # noqa: C901 (Complexity will be reduced)
     # Initialization 
     pid_instance = None # Define outside try block
+    cfg_mgr = None # Define cfg_mgr outside try block
     try:
         display, led, buttons, opentherm = initialize_hardware()
-        cfg_mgr, cfg, wifi, homematic = initialize_services()
+        # Correct unpacking: initialize_services now returns 3 items
+        cfg_mgr, wifi, homematic = initialize_services() 
         gui = GUIManager(display, buttons) 
-        setup_gui(gui, cfg_mgr, cfg, wifi, homematic, opentherm)
-
-        # Instantiate PID Controller
+        
+        # Instantiate PID Controller using cfg_mgr.get()
         logger.info("Instantiating PID Controller...")
         pid_instance = PIDController(
-            kp=cfg["pid_kp"],
-            ki=cfg["pid_ki"],
-            kd=cfg["pid_kd"],
-            setpoint=cfg["pid_setpoint"],
-            output_min=35.0, # Or load from config if needed
-            output_max=cfg["ot_max_heating_setpoint"], # Use OT max heating setpoint
+            # Use cfg_mgr.get directly - type hint in ConfigManager should help linter
+            kp=cfg_mgr.get("PID", "KP", 0.05), 
+            ki=cfg_mgr.get("PID", "KI", 0.002),
+            kd=cfg_mgr.get("PID", "KD", 0.01),
+            setpoint=cfg_mgr.get("PID", "SETPOINT", 25.0),
+            output_min=35.0, # Keep hardcoded or load if needed
+            output_max=cfg_mgr.get("OT", "MAX_HEATING_SETPOINT", 72.0), # Get OT max heating SP
             integral_min=None, # Keep default for now
             integral_max=None, # Keep default for now
-            ff_wind_coeff=cfg["pid_ff_wind"],
-            ff_temp_coeff=cfg["pid_ff_temp"],
-            ff_sun_coeff=cfg["pid_ff_sun"],
-            ff_wind_interaction_coeff=cfg["pid_ff_wind_interact"],
-            base_temp_ref_outside=cfg["pid_base_temp_ref"],
-            base_temp_boiler=cfg["pid_base_temp_boiler"],
-            valve_input_min=cfg["pid_valve_min"],
-            valve_input_max=cfg["pid_valve_max"],
+            ff_wind_coeff=cfg_mgr.get("PID", "FF_WIND_COEFF", 0.1),
+            ff_temp_coeff=cfg_mgr.get("PID", "FF_TEMP_COEFF", 1.1),
+            ff_sun_coeff=cfg_mgr.get("PID", "FF_SUN_COEFF", 0.0001),
+            ff_wind_interaction_coeff=cfg_mgr.get("PID", "FF_WIND_INTERACTION_COEFF", 0.008),
+            base_temp_ref_outside=cfg_mgr.get("PID", "BASE_TEMP_REF_OUTSIDE", 10.0),
+            base_temp_boiler=cfg_mgr.get("PID", "BASE_TEMP_BOILER", 45.0),
+            valve_input_min=cfg_mgr.get("PID", "VALVE_MIN", 8.0),
+            valve_input_max=cfg_mgr.get("PID", "VALVE_MAX", 70.0),
             time_factor=1.0 # Use real-time for actual operation
         )
         logger.info("PID Controller instantiated.")
+
+        # Pass pid_instance to setup_gui
+        setup_gui(gui, cfg_mgr, wifi, homematic, opentherm, pid_instance)
 
     except Exception as e: # Catch init errors
         logger.fatal("Initialization", str(e),resetmachine=not DEVELOPMENT_MODE)
@@ -164,16 +169,17 @@ async def main():  # noqa: C901 (Complexity will be reduced)
     # Start Async Event Loop and Schedule Tasks
     loop = asyncio.get_event_loop()
     # Pass pid_instance and interval to schedule_tasks if pid was created
-    if pid_instance:
-        # Ensure value is converted to string and provide fallback before int()
-        interval_val_str = str(cfg_mgr.get_value("PID", "UPDATE_INTERVAL_SEC", 30) or 30)
-        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons, pid=pid_instance, interval_s=int(interval_val_str), cfg_mgr=cfg_mgr)
+    # Ensure cfg_mgr exists before accessing it
+    if pid_instance and cfg_mgr:
+        # Use cfg_mgr.get directly for interval - hoping Any hint suffices
+        interval_val = cfg_mgr.get("PID", "UPDATE_INTERVAL_SEC", 30)
+        # schedule_tasks expects int, but let's see if linter allows Any
+        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons, pid=pid_instance, interval_s=interval_val, cfg_mgr=cfg_mgr)
     else:
-        # Schedule without PID if it failed to initialize
-        logger.error("PID instance not created, scheduling tasks without PID control.")
-        # simplified schedule_tasks call might be needed here if pid/interval are required args
-        # For now, assume schedule_tasks handles optional pid/interval or modify it next.
-        pass # Or call a version of schedule_tasks that doesn't need pid
+        # Schedule without PID if it failed to initialize or cfg_mgr is missing
+        logger.error("PID instance or ConfigManager not available, scheduling tasks without PID control.")
+        # Schedule tasks without PID related parameters
+        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons)
 
     # Main Loop
     try:

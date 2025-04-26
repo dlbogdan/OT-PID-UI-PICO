@@ -6,11 +6,11 @@ from managers.manager_logger import Logger
 
 logger = Logger()
 
-# Helper function to safely convert config values to boolean
-def _config_str_to_bool(value, default=False):
-    if value is None:
-        return default
-    return str(value).strip().lower() == "true"
+# Remove the helper function - no longer needed with JSON types
+# def _config_str_to_bool(value, default=False):
+#     if value is None:
+#         return default
+#     return str(value).strip().lower() == "true"
 
 async def wifi_task(wifi):
     while True:
@@ -83,25 +83,58 @@ async def main_status_task(hm, wifi, led):
 async def pid_control_task(pid, hm, ot_manager, interval_s, cfg_mgr):
     """Periodically syncs OT state and applies PID or manual control based on config."""
     logger.info(f"Starting PID/Manual Control task with interval {interval_s}s.")
-    await asyncio.sleep(5)
+    await asyncio.sleep(5) # Initial delay
 
     while True:
         try:
             # --- Synchronize OT Control State (Takeover) --- #
-            desired_takeover = _config_str_to_bool(cfg_mgr.get_value("OT", "ENABLE_CONTROLLER"), default=False)
+            # Use cfg_mgr.get directly, default is False (boolean)
+            desired_takeover = cfg_mgr.get("OT", "ENABLE_CONTROLLER", False)
             actual_takeover = ot_manager.is_active()
 
             if desired_takeover and not actual_takeover:
                 logger.info("SYNC: Takeover ON desired, not active. Taking control.")
+                # Check status of take_control command if needed in future
                 ot_manager.take_control()
             elif not desired_takeover and actual_takeover:
                 logger.info("SYNC: Takeover OFF desired, but active. Relinquishing control.")
+                # Check status of relinquish_control command if needed in future
                 ot_manager.relinquish_control()
+                continue #otherwise there might be a race condition that causes the controller to take control again immediately
             # --- End OT Control State Sync --- #
 
-            # --- Main Control Logic (Only if Takeover is Active) --- #
+            # --- DHW Control (Independent of Takeover) --- #
+            # Always manage DHW enable/disable based on its specific config toggle
+            dhw_enabled = cfg_mgr.get("OT", "ENABLE_DHW", True)
+            actual_dhw_state = ot_manager.is_dhw_enabled() # Assumes manager tracks this
+            if dhw_enabled != actual_dhw_state:
+                logger.info(f"SYNC: Setting DHW from {actual_dhw_state} to {dhw_enabled}")
+                ot_manager.set_hot_water_mode(1 if dhw_enabled else 0)
+            
+            # Sync DHW setpoint ONLY if DHW is enabled AND the enforce flag is set
+            if dhw_enabled and cfg_mgr.get("OT", "ENFORCE_DHW_SETPOINT", False):
+                desired_dhw_sp = cfg_mgr.get("OT", "DHW_SETPOINT", 50.0)
+                actual_dhw_sp = ot_manager.get_dhw_setpoint() # Assumes getter exists
+                # Compare floats carefully, or just send if different enough?
+                if abs(desired_dhw_sp - (actual_dhw_sp if actual_dhw_sp is not None else -999)) > 0.1:
+                    logger.info(f"SYNC (Enforced): Setting DHW Setpoint from {actual_dhw_sp} to {desired_dhw_sp}")
+                    ot_manager.set_dhw_setpoint(desired_dhw_sp)
+            # --- End DHW Control --- #
+
+            # --- Max CH Setpoint Sync (REMOVE PERIODIC CHECK/SEND) --- #
+            # We still need to update the PID limit if the config value changes, 
+            # but we won't send the SH command repeatedly here.
+            # The SH command is typically set once or when changed via GUI/other means.
+            desired_max_ch_sp = cfg_mgr.get("OT", "MAX_HEATING_SETPOINT", 72.0)
+            if pid and abs(pid.output_max - desired_max_ch_sp) > 0.1:
+                 logger.info(f"SYNC: Updating PID output_max to {desired_max_ch_sp} (from {pid.output_max:.1f})")
+                 pid.output_max = desired_max_ch_sp
+            # --- End Max CH Setpoint Sync --- #
+
+            # --- Main Heating Control Logic (Only if Takeover is Active) --- #
             if ot_manager.is_active():
-                auto_heat_enabled = _config_str_to_bool(cfg_mgr.get_value("AUTOH", "ENABLE"), default=False)
+                # Use cfg_mgr.get directly, default is True (boolean)
+                auto_heat_enabled = cfg_mgr.get("AUTOH", "ENABLE", True)
                 
                 target_heating_state = False # Final desired state for CH=1/0 for this cycle
                 target_setpoint = 10.0    # Default CS=10 when heating is OFF
@@ -115,10 +148,11 @@ async def pid_control_task(pid, hm, ot_manager, interval_s, cfg_mgr):
 
                     current_temp = hm.temperature
                     avg_valve = hm.avg_valve
-                    off_temp = float(cfg_mgr.get_value("AUTOH", "OFF_TEMP", 20.0)) 
-                    off_valve = float(cfg_mgr.get_value("AUTOH", "OFF_VALVE_LEVEL", 6.0))
-                    on_temp = float(cfg_mgr.get_value("AUTOH", "ON_TEMP", 17.0))
-                    on_valve = float(cfg_mgr.get_value("AUTOH", "ON_VALVE_LEVEL", 8.0))
+                    # Use cfg_mgr.get directly for float values
+                    off_temp = cfg_mgr.get("AUTOH", "OFF_TEMP", 20.0) 
+                    off_valve = cfg_mgr.get("AUTOH", "OFF_VALVE_LEVEL", 6.0)
+                    on_temp = cfg_mgr.get("AUTOH", "ON_TEMP", 17.0)
+                    on_valve = cfg_mgr.get("AUTOH", "ON_VALVE_LEVEL", 8.0)
 
                     if current_ch_state: # Currently ON? Check OFF conditions
                         if current_temp is not None and current_temp >= off_temp:
@@ -132,54 +166,80 @@ async def pid_control_task(pid, hm, ot_manager, interval_s, cfg_mgr):
                             current_temp < on_temp and avg_valve > on_valve):
                             logger.info(f"AutoHeat: Condition met to enable heating (Temp {current_temp:.1f}C < {on_temp:.1f}C AND Avg Valve {avg_valve:.1f}% > {on_valve:.1f}%)")
                             heating_should_be_enabled = True
-                    
+                        # Add check for enabling heating based only on valve level if temp unavailable? Optional.
+                        elif current_temp is None and avg_valve is not None and avg_valve > on_valve:
+                             logger.info(f"AutoHeat: Enabling heating based on valve level ({avg_valve:.1f}%) as temp is unavailable.")
+                             heating_should_be_enabled = True
+
                     target_heating_state = heating_should_be_enabled
 
                     # If heating should be ON, calculate PID setpoint
                     if target_heating_state:
-                        current_max_valve = hm.max_valve
-                        current_temp_pid = hm.temperature if hm.temperature is not None else pid.base_temp_ref_outside
-                        current_wind = hm.wind_speed if hm.wind_speed is not None else 0.0
-                        current_sun = hm.illumination if hm.illumination is not None else 0.0
-                        
-                        pid_output = pid.update(
-                            current_max_valve, current_wind, current_temp_pid, current_sun
-                        )
-                        target_setpoint = pid_output # Use PID output
-                        logger.info(f"PID Update: MaxValve={current_max_valve:.1f}, Temp={current_temp_pid:.1f}, Wind={current_wind:.1f}, Sun={current_sun:.0f} -> BoilerTemp={target_setpoint:.2f}")
-                    else:
+                        # Ensure PID instance exists before using it
+                        if pid:
+                            current_max_valve = hm.max_valve
+                            current_temp_pid = hm.temperature if hm.temperature is not None else pid.base_temp_ref_outside
+                            current_wind = hm.wind_speed if hm.wind_speed is not None else 0.0
+                            current_sun = hm.illumination if hm.illumination is not None else 0.0
+                            
+                            pid_output = pid.update(
+                                current_max_valve, current_wind, current_temp_pid, current_sun
+                            )
+                            target_setpoint = pid_output # Use PID output
+                            logger.info(f"PID Update: MaxValve={current_max_valve:.1f}, Temp={current_temp_pid:.1f}, Wind={current_wind:.1f}, Sun={current_sun:.0f} -> BoilerTemp={target_setpoint:.2f}")
+                        else:
+                            logger.error("AutoHeat: PID instance is None, cannot calculate setpoint. Using default.")
+                            # Fallback: Use manual setpoint or a safe default if PID is missing?
+                            target_setpoint = cfg_mgr.get("OT", "MANUAL_HEATING_SETPOINT", 55.0)
+                            logger.warning(f"Falling back to manual/default setpoint: {target_setpoint}")
+
+                    else: # AutoHeat determined heating should be OFF
                         logger.debug("AutoHeat: Heating OFF. Target CS=10.0")
                         # target_setpoint remains 10.0
 
                 # === MANUAL MODE ===
-                else: 
+                else: # Auto heat is disabled
                     logger.debug("MODE: Manual Heating Control")
-                    manual_heating_desired = _config_str_to_bool(cfg_mgr.get_value("OT", "ENABLE_HEATING"), default=False)
+                    # Use cfg_mgr.get directly for boolean
+                    manual_heating_desired = cfg_mgr.get("OT", "ENABLE_HEATING", False)
                     target_heating_state = manual_heating_desired
                     
                     if target_heating_state:
-                        manual_setpoint = float(cfg_mgr.get_value("OT", "MANUAL_HEATING_SETPOINT", 55.0))
+                        # Use cfg_mgr.get directly for float
+                        manual_setpoint = cfg_mgr.get("OT", "MANUAL_HEATING_SETPOINT", 55.0)
                         target_setpoint = manual_setpoint # Use Manual setpoint
                         logger.info(f"ManualHeat: Heating ON. Target CS={target_setpoint:.2f}")
                     else:
                         logger.debug("ManualHeat: Heating OFF. Target CS=10.0")
                         # target_setpoint remains 10.0
 
-                # === Apply Determined State ===
+                # === Apply Determined Heating State ===
                 actual_heating_state = ot_manager.is_ch_enabled()
                 if target_heating_state != actual_heating_state:
                     logger.info(f"State Change: Setting CH from {actual_heating_state} to {target_heating_state}")
                     ot_manager.set_central_heating(target_heating_state)
                 
-                # Always apply the target setpoint (either PID, Manual, or 10.0)
-                logger.info(f"Applying Control Setpoint: {target_setpoint:.2f}")
-                ot_manager.set_control_setpoint(target_setpoint)
+                # === Apply Determined Control Setpoint ===
+                # Only apply heating setpoint if CH is actually ON (or intended to be ON)
+                if target_heating_state:
+                    actual_control_setpoint = ot_manager.get_control_setpoint()
+                    # Compare floats carefully, or just send if different enough?
+                    if abs(target_setpoint - (actual_control_setpoint if actual_control_setpoint is not None else -999)) > 0.1:
+                        logger.info(f"Applying Control Setpoint: {target_setpoint:.2f} (Previous: {actual_control_setpoint})")
+                        ot_manager.set_control_setpoint(target_setpoint)
+                    else:
+                        logger.debug(f"Control Setpoint unchanged: {target_setpoint:.2f}")
+                else: # Heating is OFF, ensure control setpoint is low (e.g., 10)
+                    actual_control_setpoint = ot_manager.get_control_setpoint()
+                    if actual_control_setpoint is None or abs(actual_control_setpoint - 10.0) > 0.1:
+                        logger.info(f"Heating OFF, ensuring Control Setpoint is 10.0 (was {actual_control_setpoint})")
+                        ot_manager.set_control_setpoint(10.0) # Ensure low setpoint when CH off
             
-            # --- End Main Control Logic --- #
+            # --- End Main Heating Control Logic --- #
             else: # Takeover is OFF
                  logger.debug("Takeover OFF: Skipping all heating control actions.")
 
-            # Use actual sleep interval from config
+            # Use actual sleep interval (already retrieved as int in main.py)
             await asyncio.sleep(interval_s)
 
         except Exception as e:

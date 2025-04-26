@@ -69,7 +69,7 @@ class JsonRpcClient:
         reader = None
         writer = None
         start_urlopen = time.ticks_ms()
-        logger.debug(f"Async _urlopen: Starting request to {self.host}:{self.port}{path}{data}")
+        logger.trace(f"Async _urlopen: Starting request to {self.host}:{self.port}{path}{data}")
 
         try:
             # --- Use asyncio streams ---
@@ -200,7 +200,7 @@ class JsonRpcClient:
                         break # EOF
                     body += chunk
 
-            logger.debug("Async _urlopen: Request finished successfully.")
+            logger.trace("Async _urlopen: Request finished successfully.")
             return status_code, resp_headers, body.decode()
 
         # --- Error Handling ---
@@ -257,7 +257,7 @@ class JsonRpcClient:
             payload["params"] = params
 
         payload_json = json.dumps(payload)
-        logger.debug(f"Async RPC Request > Method: {jsonrpc_method}, ID: {id_val}")
+        logger.trace(f"Async RPC Request > Method: {jsonrpc_method}, ID: {id_val}")
 
         attempt = 0
         while True:
@@ -270,7 +270,7 @@ class JsonRpcClient:
                     response_data = json.loads(body)
                     if "error" in response_data and response_data["error"]:
                         logger.error(f"Async JsonRpcClient Error: Received JSON-RPC error: {response_data['error']}")
-                    logger.debug(f"Async RPC Response < ID: {id_val}, Status: {status_code}")
+                    logger.trace(f"Async RPC Response < ID: {id_val}, Status: {status_code}")
                     return response_data # Success or RPC-level error contained within
                 except ValueError:
                     logger.error(f"Async JsonRpcClient Error: Response status 200 but body is not valid JSON.")

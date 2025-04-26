@@ -135,44 +135,61 @@ def HWUART():
     return UART(OT_UART_ID, baudrate=OT_UART_BAUDRATE, tx=Pin(OT_UART_TX_PIN), rx=Pin(OT_UART_RX_PIN), timeout=10, timeout_char=10)
 
 def ConfigFileName(factory:bool=False):
+    """Returns the appropriate configuration filename (now JSON)."""
     if factory:
-        return "config_factory.txt"
+        return "config_factory.json"
     else:
-        return "config.txt"
+        return "config.json"
 
 DEFAULT_FACTORY_CONFIG = {
     "DEVICE": {
-        "DEBUG": "1",
+        "DEBUG": 1,
     },
     "WIFI": {
-        "SSID": "",
-        "PASS": "",
+        "SSID": "ssid",
+        "PASS": "pass",
     },
     "CCU3": {
         "IP": "0.0.0.0",
-        "USER": "",
-        "PASS": "",
+        "USER": "user",
+        "PASS": "pass",
         "VALVE_DEVTYPE": "HmIP-eTRV",
         "WEATHER_DEVTYPE": "HmIP-SWO",
     },
     "OT": {
-        "MAX_HEATING_SETPOINT": "72.0",
-        "MANUAL_HEATING_SETPOINT": "55.0",
-        "DHW_SETPOINT": "50.0",
-        "ENABLE_CONTROLLER": "False",
-        "ENABLE_HEATING": "False",
-        "ENABLE_DHW": "True",
+        "MAX_HEATING_SETPOINT": 72.0,
+        "MANUAL_HEATING_SETPOINT": 55.0,
+        "DHW_SETPOINT": 50.0,
+        "ENABLE_CONTROLLER": False,
+        "ENABLE_HEATING": False,
+        "ENABLE_DHW": True,
+        "ENFORCE_DHW_SETPOINT": False,
     },
     "AUTOH": {
-        "ENABLE": "True",
-        "OFF_TEMP": "20.0",
-        "OFF_VALVE_LEVEL": "6.0",
-        "ON_TEMP": "17.0",
-        "ON_VALVE_LEVEL": "8.0",
+        "ENABLE": True,
+        "OFF_TEMP": 20.0,
+        "OFF_VALVE_LEVEL": 6.0,
+        "ON_TEMP": 17.0,
+        "ON_VALVE_LEVEL": 8.0,
     },
     "MQTT": {
-        "BROKER": "",
-        "PORT": "1883",
+        "BROKER": "broker",
+        "PORT": 1883,
     },
+    "PID": {
+        "KP": 0.05,
+        "KI": 0.002,
+        "KD": 0.01,
+        "SETPOINT": 25.0,
+        "UPDATE_INTERVAL_SEC": 30,
+        "VALVE_MIN": 8.0,
+        "VALVE_MAX": 70.0,
+        "FF_WIND_COEFF": 0.1,
+        "FF_WIND_INTERACTION_COEFF": 0.008,
+        "FF_TEMP_COEFF": 1.1,
+        "FF_SUN_COEFF": 0.0001,
+        "BASE_TEMP_REF_OUTSIDE": 10.0,
+        "BASE_TEMP_BOILER": 45.0,
+    }
 }
 # ------------------------------------

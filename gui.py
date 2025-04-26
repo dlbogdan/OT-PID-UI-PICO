@@ -78,101 +78,190 @@ class Editor:
 class IntEditor(Editor):
     def handle(self, event):
         if event.type != ButtonEventType.PRESSED:
-            return
+            return False # Not handled
+        
+        action_occurred = False
         try:
             current_val = int(self.field.editing_value)
         except ValueError:
             current_val = 0 # Default to 0 if parsing fails
 
         if event.button == ButtonName.UP:
-            self.field.editing_value = str(current_val + 1)
+            new_val = current_val + 1
+            self.field.editing_value = str(new_val)
+            action_occurred = True # Value changed
         elif event.button == ButtonName.DOWN:
-            val = max(0, current_val - 1) # Prevent going below 0
-            self.field.editing_value = str(val)
+            new_val = max(0, current_val - 1) # Prevent going below 0
+            if new_val != current_val:
+                self.field.editing_value = str(new_val)
+                action_occurred = True # Value changed
+
+        return action_occurred # Return handled status
 
 class FloatEditor(Editor):
-    def __init__(self, field):
+    def __init__(self, field, precision=1):
         super().__init__(field)
-        self.cursor_on_fraction = False # Start editing the integer part
+        self.precision = precision
+        # State: True = editing integer part, False = editing fractional part digit-by-digit
+        self.editing_integer_part = True
+        # Cursor position for fractional editing, -1 when editing integer part
+        self.cursor_pos = -1
+
+    def wants_cursor(self):
+        # Only show cursor when editing the fractional part
+        return not self.editing_integer_part
 
     def handle(self, event):
         if event.type != ButtonEventType.PRESSED:
-            return
+            return False
 
-        # --- Debugging Float Edit ---
-        logger.debug(f"FloatEditor.handle - Start - editing_value='{self.field.editing_value}'")
-        # --- End Debugging ---
+        action_occurred = False
+        val_str = self.field.editing_value
+        max_len = len(val_str)
 
-        try:
-            val = float(self.field.editing_value)
-        except ValueError as e:
-            # --- Debugging Float Edit ---
-            logger.error(f"FloatEditor.handle - Failed to parse float: '{self.field.editing_value}'. Error: {e}")
-            val = 0.0 # Default if parsing fails
+        if event.button == ButtonName.RIGHT:
+            if self.editing_integer_part:
+                # Switch from integer to fractional editing
+                self.editing_integer_part = False
+                # Find decimal point and set cursor after it
+                try:
+                    decimal_point_index = val_str.index('.')
+                    # Place cursor at the first fractional digit if possible
+                    self.cursor_pos = min(decimal_point_index + 1, max_len - 1)
+                except ValueError:
+                    # Should not happen if formatted correctly, but handle defensively
+                    self.cursor_pos = max_len - 1 # Place at end if no '.' found
+                action_occurred = True
+                logger.trace("FloatEditor RIGHT - Switched to fractional edit")
+            elif self.cursor_pos < max_len - 1:
+                 # Move cursor right within fractional part
+                original_pos = self.cursor_pos
+                self.cursor_pos += 1
+                if self.cursor_pos != original_pos: # Check if moved
+                     action_occurred = True
+                     logger.trace(f"FloatEditor RIGHT - Fractional cursor moved to {self.cursor_pos}")
 
-        if event.button == ButtonName.UP:
-            inc = 0.01 if self.cursor_on_fraction else 1.0
-            val += inc
-            self.field.editing_value = f"{val:.2f}"
-            action_occurred = True
-        elif event.button == ButtonName.DOWN:
-            dec = 0.01 if self.cursor_on_fraction else 1.0
-            val = max(0.0, val - dec) # Prevent going below 0
-            self.field.editing_value = f"{val:.2f}"
-            action_occurred = True
         elif event.button == ButtonName.LEFT:
-            self.cursor_on_fraction = False
-            action_occurred = True # Cursor state change counts as action for render
-        elif event.button == ButtonName.RIGHT:
-            self.cursor_on_fraction = True
-            action_occurred = True # Cursor state change counts as action for render
-        else:
-            action_occurred = False
+            if not self.editing_integer_part:
+                 # Check if cursor is at the first fractional digit
+                try:
+                    decimal_point_index = val_str.index('.')
+                    if self.cursor_pos == decimal_point_index + 1:
+                         # Switch to integer editing
+                        self.editing_integer_part = True
+                        self.cursor_pos = -1 # No fractional cursor
+                        action_occurred = True
+                        logger.trace("FloatEditor LEFT - Switched to integer edit")
+                    elif self.cursor_pos > decimal_point_index + 1:
+                         # Move cursor left within fractional part
+                        original_pos = self.cursor_pos
+                        self.cursor_pos -= 1
+                        if self.cursor_pos != original_pos: # Check if moved
+                             action_occurred = True
+                             logger.trace(f"FloatEditor LEFT - Fractional cursor moved to {self.cursor_pos}")
+                except ValueError:
+                     # Error finding decimal point, maybe switch to integer anyway?
+                     self.editing_integer_part = True
+                     self.cursor_pos = -1
+                     action_occurred = True
+                     logger.warning("FloatEditor LEFT - No decimal point found, switching to integer edit")
+            # else: Already editing integer part, LEFT does nothing
 
-        # --- Debugging Float Edit ---
-        if action_occurred:
-            logger.debug(f"FloatEditor.handle - End - editing_value='{self.field.editing_value}'")
-        # --- End Debugging ---
+        elif event.button == ButtonName.UP or event.button == ButtonName.DOWN:
+            if self.editing_integer_part:
+                # --- Edit Whole Integer Part ---
+                try:
+                    val = float(val_str)
+                    increment = 1.0
+                    if event.button == ButtonName.UP:
+                        val += increment
+                    else: # DOWN
+                        val -= increment
+                        # We might want to allow negative numbers later, but for now keep >= 0
+                        val = max(0.0, val)
 
+                    self.field.editing_value = f"{val:.{self.precision}f}"
+                    action_occurred = True
+                    logger.trace(f"FloatEditor UP/DOWN - Integer part changed to {int(val)}")
+                except ValueError:
+                    logger.error(f"FloatEditor - Could not parse '{val_str}' for integer edit")
+                # --- End Integer Part Edit ---
+            else:
+                # --- Edit Fractional Part Digit ---
+                val_str_list = list(val_str)
+                # Ensure cursor is within bounds before accessing list
+                if 0 <= self.cursor_pos < max_len and val_str_list[self.cursor_pos].isdigit():
+                    digit = int(val_str_list[self.cursor_pos])
+                    if event.button == ButtonName.UP:
+                        new_digit = (digit + 1) % 10
+                    else: # DOWN
+                        new_digit = (digit - 1 + 10) % 10
+
+                    val_str_list[self.cursor_pos] = str(new_digit)
+                    self.field.editing_value = "".join(val_str_list)
+                    action_occurred = True
+                    logger.trace(f"FloatEditor UP/DOWN - Fractional digit at {self.cursor_pos} changed to {new_digit}")
+                else:
+                    logger.trace(f"FloatEditor UP/DOWN - No fractional change, cursor at {self.cursor_pos} (not a digit or out of bounds)")
+                # --- End Fractional Part Edit ---
+
+        return action_occurred
 
     def render(self, cols):
-        # Highlight the part being edited (integer or fractional)
-        try:
-            parts = self.field.editing_value.split('.')
-            if len(parts) != 2:
-                 logger.warning(f"FloatEditor.render - Invalid format '{self.field.editing_value}', defaulting.")
-                 parts = ['0', '00'] # Default on split error
-
-            # --- Manual Padding for Fractional Part ---
-            fractional_part = parts[1]
-            if len(fractional_part) < 2:
-                fractional_part += '0' * (2 - len(fractional_part))
-            elif len(fractional_part) > 2:
-                fractional_part = fractional_part[:2]
-            parts[1] = fractional_part
-            # --- End Manual Padding ---
-
-        except Exception as e:
-             logger.error(f"FloatEditor.render - Error splitting/padding: {e}, Value='{self.field.editing_value}'")
-             parts = ['0', '00'] # Default on other errors
-
-        # --- Use Brackets for Highlighting ---
-        if self.cursor_on_fraction:
-             highlighted_value = f"{parts[0]}.[{parts[1]}]"
+        value_str = self.field.editing_value
+        if self.editing_integer_part:
+            # Highlight the integer part
+            try:
+                if '.' in value_str:
+                    parts = value_str.split('.', 1)
+                    display_value = f"[{parts[0]}].{parts[1]}"
+                else: # Should have decimal from formatting, but handle anyway
+                    display_value = f"[{value_str}]"
+            except Exception as e:
+                 logger.error(f"FloatEditor.render (int part) error: {e}")
+                 display_value = f"[{value_str}]" # Fallback
+            return pad_string(display_value, cols)
         else:
-             highlighted_value = f"[{parts[0]}].{parts[1]}"
-        # --- End Bracket Highlighting ---
+            # Fractional part editing: Display normally, cursor handled by EditingMode
+            return pad_string(value_str, cols)
 
-        return pad_string(highlighted_value, cols)
+    def confirm(self):
+        """Confirm: Parse string, save float, reformat string."""
+        try:
+            confirmed_float = float(self.field.editing_value)
+            self.field.value = confirmed_float
+            self.field.editing_value = f"{confirmed_float:.{self.precision}f}"
+            logger.info(f"Confirmed '{self.field.name}': {self.field.value} (Editor Str: '{self.field.editing_value}')")
+            if self.field.callback:
+                self.field.callback(self.field.value)
+        except ValueError:
+            logger.error(f"Confirming FloatEditor '{self.field.name}': Invalid final value '{self.field.editing_value}'. Cancelling.")
+            self.cancel()
+
+    def cancel(self):
+        """Cancel: Revert editing_value from stored float value."""
+        try:
+            original_float = float(self.field.value)
+            self.field.editing_value = f"{original_float:.{self.precision}f}"
+            logger.info(f"Cancelled edit for '{self.field.name}', reverted editor string to '{self.field.editing_value}'")
+        except (ValueError, TypeError):
+             logger.error(f"Error during FloatEditor cancel for '{self.field.name}': Stored value '{self.field.value}' invalid. Resetting editor.")
+             self.field.editing_value = f"{0.0:.{self.precision}f}"
 
 class BoolEditor(Editor):
     def handle(self, event):
         if event.type != ButtonEventType.PRESSED:
-            return
-        # Toggle on UP or DOWN press
+            return False
+        
+        action_occurred = False
         if event.button in (ButtonName.UP, ButtonName.DOWN):
             current_bool = self.field.editing_value.lower() == "true"
-            self.field.editing_value = "True" if not current_bool else "False"
+            new_value_str = "True" if not current_bool else "False"
+            if new_value_str != self.field.editing_value:
+                self.field.editing_value = new_value_str
+                action_occurred = True # Value changed
+        
+        return action_occurred
 
     def render(self, cols):
          # Optionally add emphasis like [True] or [False]
@@ -285,6 +374,8 @@ class TextEditor(Editor):
              if event.button in (ButtonName.LEFT, ButtonName.RIGHT, ButtonName.UP, ButtonName.DOWN):
                  logger.debug("TextEditor - No effective action occurred.")
 
+        return action_occurred
+
     def render(self, cols):
          return pad_string(self.field.editing_value, cols)
 
@@ -310,24 +401,37 @@ class IPAddressEditor(Editor):
 
     def handle(self, event):
         if event.type != ButtonEventType.PRESSED:
-            return
-
+            return False
+        
+        action_occurred = False
         octets = self._parse_octets()
-        current_octet_val = octets[self.editing_octet_index]
+        original_octet_val = octets[self.editing_octet_index]
+        original_octet_index = self.editing_octet_index
 
         if event.button == ButtonName.UP:
-            octets[self.editing_octet_index] = min(255, current_octet_val + 1)
+            new_val = min(255, original_octet_val + 1)
+            if new_val != original_octet_val:
+                octets[self.editing_octet_index] = new_val
+                action_occurred = True # Value changed
         elif event.button == ButtonName.DOWN:
-            octets[self.editing_octet_index] = max(0, current_octet_val - 1)
+            new_val = max(0, original_octet_val - 1)
+            if new_val != original_octet_val:
+                octets[self.editing_octet_index] = new_val
+                action_occurred = True # Value changed
         elif event.button == ButtonName.LEFT:
-            # Move to previous octet
             self.editing_octet_index = (self.editing_octet_index - 1) % 4
+            if self.editing_octet_index != original_octet_index:
+                action_occurred = True # Index changed
         elif event.button == ButtonName.RIGHT:
-            # Move to next octet
             self.editing_octet_index = (self.editing_octet_index + 1) % 4
+            if self.editing_octet_index != original_octet_index:
+                action_occurred = True # Index changed
 
-        # Update the editing value string
-        self.field.editing_value = self._format_octets(octets)
+        # Update the editing value string only if something changed
+        if action_occurred:
+            self.field.editing_value = self._format_octets(octets)
+
+        return action_occurred # Return handled status
 
     def render(self, cols):
         """Renders the IP address, highlighting the currently edited octet."""
@@ -422,41 +526,33 @@ class IntField(Field):
 
 
 class FloatField(Field):
-    def __init__(self, name, value, callback=None):
-        # Handle None or invalid initial values gracefully
-        initial_float = 0.0 # Default value
+    def __init__(self, name, value, callback=None, precision=1):
+        self.precision = precision
+        initial_float = 0.0
         if value is not None:
             try:
                 initial_float = float(value)
             except (ValueError, TypeError):
                 logger.warning(f"FloatField '{name}' received invalid initial value '{value}'. Defaulting to 0.0.")
-                # initial_float remains 0.0
         else:
              logger.warning(f"FloatField '{name}' received None initial value. Defaulting to 0.0.")
-             # initial_float remains 0.0
 
-        # Ensure the stored value is a float
-        # initial_float = float(value)
+        # Store the actual float value
         super().__init__(name, initial_float, callback)
-        # Ensure the initial editing_value string is correctly formatted
-        self.editing_value = f"{initial_float:.2f}"
+        # Initialize editing_value using the correct precision
+        self.editing_value = f"{initial_float:.{self.precision}f}"
 
     def get_editor(self):
-        return FloatEditor(self)
+        # Pass precision to the editor
+        return FloatEditor(self, self.precision)
 
     def confirm(self):
-        # Ensure value is stored as float after edit
-        try:
-            self.value = float(self.editing_value)
-        except ValueError:
-             logger.error(f"confirming FloatField '{self.name}': Invalid value '{self.editing_value}'. Reverting.")
-             # Revert to the original float value if conversion fails
-             self.value = float(self._value) # Use the initial stored float
+        # Let editor handle it
+        pass
 
-        # Ensure editing_value is synced and correctly formatted after confirm/revert
-        self.editing_value = f"{self.value:.2f}"
-        if self.callback:
-            self.callback(self.value)
+    def cancel(self):
+        # Let editor handle it
+        pass
 
 
 class BoolField(Field):
@@ -617,8 +713,8 @@ class NavigationMode(UIMode):
         display.show_cursor(False)
         lines_to_show = [title, item_text] # Example for 2-row display
   
-        # Assuming 'display' is the DisplayController instance
-        logger.info(lines_to_show)
+        # Change logging level here
+        logger.trace(lines_to_show)
         display.show_message(*lines_to_show, scrolling_lines=[0, 1])
 
     def handle_event(self, event, manager):
@@ -805,7 +901,7 @@ class MonitoringMode(UIMode):
     # --- Refresh Task ---
     async def _refresh_task_coro(self, manager):
         """Coroutine that periodically triggers a re-render."""
-        logger.info("MonitoringMode Refresh Task: Started.")
+        logger.trace("MonitoringMode Refresh Task: Started.")
         try:
             while True:
                 await asyncio.sleep_ms(self.refresh_interval_ms)
@@ -816,7 +912,7 @@ class MonitoringMode(UIMode):
                     if manager.current_mode is self:
                         manager.render()
                     else:
-                        logger.info("MonitoringMode Refresh Task: Mode changed, exiting loop.")
+                        logger.trace("MonitoringMode Refresh Task: Mode changed, exiting loop.")
                         break
                 except Exception as e:
                     # Log error during render
@@ -830,13 +926,13 @@ class MonitoringMode(UIMode):
             error_message = f"Error in MonitoringMode Refresh Task: {e}"
             logger.error(error_message)
         finally:
-            logger.info("MonitoringMode Refresh Task: Finished.")
+            logger.trace("MonitoringMode Refresh Task: Finished.")
 
     def _cancel_refresh_task(self):
         """Safely cancels the refresh task if it's running."""
         if self._refresh_task and not self._refresh_task.done():
             try:
-                logger.info("MonitoringMode: Cancelling refresh task.")
+                logger.trace("MonitoringMode: Cancelling refresh task.")
                 self._refresh_task.cancel()
                 # Allow the task to finish cancelling itself
             except Exception as e:
@@ -857,18 +953,14 @@ class EditingMode(UIMode):
         logger.info("Entering Editing Mode")
         if context and isinstance(context.get('field'), Field):
             self.editing_field = context['field']
-            # --- Use the field's existing editing_value which should be pre-formatted ---
-            # No need to reset here, FloatField init/confirm handles formatting.
-            # self.editing_field.editing_value = str(self.editing_field.value) # OLD
-            logger.debug(f"DEBUG: EditingMode.enter - Using Field's editing_value: '{self.editing_field.editing_value}'")
-            # --- End Change ---
-
+            # Initial editing_value should be set correctly by Field init
+            logger.debug(f"EditingMode.enter - Using Field's editing_value: '{self.editing_field.editing_value}'")
             self.editor = self.editing_field.get_editor()
             logger.info(f"Editing field: {self.editing_field.name} with {type(self.editor).__name__}")
             manager.render() # Render editor immediately
         else:
             error_message = "Error: EditingMode entered without valid 'field' in context."
-            logger.error(error_message) # Log as warning
+            logger.error(error_message)
             manager.switch_mode("navigation")
 
     def exit(self, manager):
@@ -884,41 +976,33 @@ class EditingMode(UIMode):
     def render(self, display):
         if not self.editor or not self.editing_field:
             error_message = "EditingMode.render: Editor or field missing!"
-            logger.warning(error_message) # Log as warning
+            logger.warning(error_message)
             display.show_message("Edit Error", "")
             if self._cursor_visible_state: display.show_cursor(False)
             self._cursor_visible_state = False
             return
 
-        # Title is the field name
         title = pad_string(self.editing_field.name, display.cols)
-        # Value is rendered by the specific editor
         value_text = self.editor.render(display.cols)
         display.show_message(title, value_text)
 
-        # Manage cursor based on editor type and state
         if self.editor.wants_cursor():
-            # --- Adjusted Cursor Position Logic ---
-            # Calculate the column where the cursor should appear ON the character being edited
-            editor_cursor_pos = self.editor.cursor_pos
-            current_text_len = len(self.editing_field.editing_value)
-
-            # Default to the editor's cursor position
-            effective_cursor_col = editor_cursor_pos
-
-            # If the editor's cursor is logically *after* the last character,
-            # display the cursor *over* the last character for editing.
-            if editor_cursor_pos == current_text_len and current_text_len > 0:
-                effective_cursor_col = editor_cursor_pos - 1
-
-            # Ensure the display column is within valid bounds (0 to cols-1)
-            final_col = max(0, min(effective_cursor_col, display.cols - 1))
-            # --- End Adjusted Logic ---
-
+            cursor_col = self.editor.cursor_pos
+            
+            # --- Adjust cursor column specifically for TextEditor --- 
+            if isinstance(self.editor, TextEditor):
+                # Display cursor UNDER the character at pos-1 (or pos 0 if at start)
+                display_col_target = max(0, cursor_col - 1)
+            else:
+                # Keep original logic for other editors (like FloatEditor fractional)
+                display_col_target = cursor_col
+            # --- End Adjustment --- 
+            
+            # Ensure final column is within display bounds
+            final_col = max(0, min(display_col_target, display.cols - 1))
             display.show_cursor_pos(True, final_col, 1) # Assuming value is on line 1 (0-indexed)
             self._cursor_visible_state = True
         else:
-            # Turn off cursor if editor doesn't want it or if it was previously on
             if self._cursor_visible_state:
                 display.show_cursor(False)
             self._cursor_visible_state = False
@@ -926,68 +1010,52 @@ class EditingMode(UIMode):
 
     def handle_event(self, event, manager):
         if not self.editor: return False
-        logger.debug(f"EditingMode.handle_event received: Button={event.button}, Type={event.type}")
+        logger.trace(f"EditingMode.handle_event received: Button={event.button}, Type={event.type}")
 
         start_repeat = False
         handled = False
-        call_editor_handle = False # Flag to decide if editor's logic should run
+        call_editor_handle = False
 
         # --- Exit / Confirm / Cancel ---
         if event.button == ButtonName.LEFT and event.type == ButtonEventType.PRESSED_LONG:
             logger.debug("EditingMode - Matched: LONG PRESS on LEFT (Cancel)")
             self.editor.cancel()
             manager.switch_mode("navigation")
-            return True # Consumed, do not call editor handle
+            return True
 
         elif event.button == ButtonName.SELECT:
-            # Confirm on PRESS or LONG_PRESS
             if event.type == ButtonEventType.PRESSED or event.type == ButtonEventType.PRESSED_LONG:
                 logger.debug(f"EditingMode - Matched: {'PRESS' if event.type == ButtonEventType.PRESSED else 'LONG PRESS'} on SELECT (Confirm)")
                 self.editor.confirm()
-                manager.switch_mode("navigation")
-                return True # Consumed, do not call editor handle
+                # Confirm might have failed (invalid value), check if editor is still active
+                if self.editor: # Editor might be None if confirm failed and called cancel
+                    manager.switch_mode("navigation")
+                # else: Stay in editing mode if confirm failed
+                return True # Event was handled either way
 
-        # --- Decide if Editor Logic should Run ---
-        # Run editor logic for standard presses of LEFT/RIGHT/UP/DOWN
-        # Also run for LONG presses of UP/DOWN (to handle the initial action before repeat starts)
+        # --- Decide if Editor Logic should Run --- 
         if event.type == ButtonEventType.PRESSED and event.button in (ButtonName.LEFT, ButtonName.RIGHT, ButtonName.UP, ButtonName.DOWN):
-            logger.debug("EditingMode - Condition Met: Standard PRESS on directional")
             call_editor_handle = True
-            handled = True
         elif event.type == ButtonEventType.PRESSED_LONG and event.button in (ButtonName.UP, ButtonName.DOWN):
-            logger.debug("EditingMode - Condition Met: LONG PRESS on UP/DOWN")
             call_editor_handle = True
-            handled = True
-            start_repeat = 'start_repeat' # Signal repeat ONLY on long press UP/DOWN
-        # else:
-        #      # Only print if it wasn't an exit/confirm action
-        #      if not (event.button == ButtonName.LEFT and event.type == ButtonEventType.PRESSED_LONG) and \
-        #         not (event.button == ButtonName.SELECT and event.type in (ButtonEventType.PRESSED, ButtonEventType.PRESSED_LONG)):
-        #           print("DEBUG: EditingMode - Event did not match conditions to call editor handle") # DEBUG
+            start_repeat = 'start_repeat'
 
-        # --- Call Editor Handle if needed ---
+        # --- Call Editor Handle if needed --- 
         if call_editor_handle:
             logger.debug("EditingMode - Calling self.editor.handle()")
             try:
-                self.editor.handle(event)
+                # Let the editor signal if it handled the event
+                handled = self.editor.handle(event)
             except Exception as e:
                 error_message = f"Exception during self.editor.handle(): {e}"
                 logger.error(error_message)
-        # else:
-        #      if DEBUG >= 2: print("DEBUG: EditingMode - NOT calling self.editor.handle()") # DEBUG
-
-        # --- Render if handled ---
+                handled = False # Treat exception as not handled
+        
+        # --- Render if handled by editor --- 
         if handled:
-             # print("DEBUG: EditingMode - Calling manager.render()") # DEBUG - Render might be too noisy
              manager.render()
-        # else:
-        #      # Only print if not handled and not an exit/confirm action
-        #       if not (event.button == ButtonName.LEFT and event.type == ButtonEventType.PRESSED_LONG) and \
-        #          not (event.button == ButtonName.SELECT and event.type in (ButtonEventType.PRESSED, ButtonEventType.PRESSED_LONG)):
-        #            print("DEBUG: EditingMode - Event not handled in this mode.") # DEBUG
 
-        # --- Return repeat signal or handled status ---
-        # print(f"DEBUG: EditingMode - Returning: start_repeat={start_repeat}, handled={handled}") # DEBUG - Return might be too noisy
+        # --- Return repeat signal or handled status --- 
         return start_repeat if start_repeat else handled
 
 
@@ -1026,7 +1094,7 @@ class GUIManager(ButtonObserver):
             name (str): The name of the mode to switch to.
             context (any): Optional data to pass to the new mode's enter() method.
         """
-        logger.info(f"Attempting to switch mode to: {name}")
+        logger.trace(f"Attempting to switch mode to: {name}")
         target_mode = self.modes.get(name)
 
         if not target_mode:
@@ -1051,7 +1119,7 @@ class GUIManager(ButtonObserver):
 
         # Call enter() on the new mode
         try:
-            logger.info(f"Entering mode '{name}'...")
+            logger.trace(f"Entering mode '{name}'...")
             self.current_mode.enter(self, context)
             # Initial render should be triggered by enter() or subsequent event handling
             # self.render() # Avoid double rendering if enter() calls render()
