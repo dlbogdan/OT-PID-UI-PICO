@@ -18,9 +18,7 @@ logger = Logger(DEBUG)
 from initialization import initialize_hardware, initialize_services, setup_gui
 # 3rd‑party / project modules
 
-from managers.manager_otgw import OpenThermManager
-from gui import GUIManager
-from controllers.controller_pid import PIDController # Import the PID controller
+from managers.gui import GUIManager
 
 # Import tasks from the new file
 from main_tasks import (
@@ -29,10 +27,7 @@ from main_tasks import (
     pid_control_task, log_pid_output_task # Import the new task
 )
 
-
-
 DEVELOPMENT_MODE=1
-
 
 # --------------------------------------------------------------------------- #
 #  Background task registration
@@ -83,7 +78,7 @@ async def main():  # noqa: C901 (Complexity will be reduced)
     except KeyboardInterrupt:
         logger.warning("KeyboardInterrupt received, shutting down...")
     except Exception as e:
-        logger.fatal("MainLoopError", str(e),resetmachine=False)
+        logger.fatal("MainLoopError", str(e),resetmachine=not DEVELOPMENT_MODE)
     finally:
         logger.info("Performing shutdown cleanup...")
         display.clear()

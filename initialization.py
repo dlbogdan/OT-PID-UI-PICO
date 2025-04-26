@@ -12,7 +12,7 @@ from managers.manager_config import ConfigManager, factory_reset
 from managers.manager_wifi import WiFiManager
 from managers.manager_otgw import OpenThermManager
 from services.service_homematic_rpc import HomematicDataService
-from gui import (
+from managers.gui import (
     GUIManager, NavigationMode, EditingMode,
     Menu, FloatField, BoolField, Action, IPAddressField, TextField,
     MonitoringMode, Page, LogView,

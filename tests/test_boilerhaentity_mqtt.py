@@ -19,8 +19,8 @@ config = None
 try:
     if ConfigManager is not None:
         config = ConfigManager(ConfigFileName(), ConfigFileName(factory=True))
-        WIFI_SSID = config.get_value("WIFI", "SSID")
-        WIFI_PASS = config.get_value("WIFI", "PASS")
+        WIFI_SSID = config.get("WIFI", "SSID")
+        WIFI_PASS = config.get("WIFI", "PASS")
     else:
         WIFI_SSID = None
         WIFI_PASS = None
