@@ -145,7 +145,7 @@ async def _handle_auto_heating(cfg_mgr, pid, hm, ot_manager):
     heating_should_be_enabled = current_ch_state # Assume current state unless changed
 
     current_temp = hm.temperature
-    avg_valve = hm.avg_valve
+    avg_level = hm.avg_active_valve
     # Use cfg_mgr.get directly for float values
     off_temp = cfg_mgr.get("AUTOH", "OFF_TEMP", 20.0) 
     off_valve = cfg_mgr.get("AUTOH", "OFF_VALVE_LEVEL", 6.0)
@@ -156,17 +156,17 @@ async def _handle_auto_heating(cfg_mgr, pid, hm, ot_manager):
         if current_temp is not None and current_temp >= off_temp:
             logger.info(f"AutoHeat: Condition met to disable heating (Temp {current_temp:.1f}C >= {off_temp:.1f}C)")
             heating_should_be_enabled = False
-        elif avg_valve is not None and avg_valve < off_valve:
-            logger.info(f"AutoHeat: Condition met to disable heating (Avg Valve {avg_valve:.1f}% < {off_valve:.1f}%)")
+        elif avg_level is not None and avg_level < off_valve:
+            logger.info(f"AutoHeat: Condition met to disable heating (Avg Valve {avg_level:.1f}% < {off_valve:.1f}%)")
             heating_should_be_enabled = False
     else: # Currently OFF? Check ON conditions
-        if (current_temp is not None and avg_valve is not None and
-            current_temp < on_temp and avg_valve > on_valve):
-            logger.info(f"AutoHeat: Condition met to enable heating (Temp {current_temp:.1f}C < {on_temp:.1f}C AND Avg Valve {avg_valve:.1f}% > {on_valve:.1f}%)")
+        if (current_temp is not None and avg_level is not None and
+            current_temp < on_temp and avg_level > on_valve):
+            logger.info(f"AutoHeat: Condition met to enable heating (Temp {current_temp:.1f}C < {on_temp:.1f}C AND Avg Valve {avg_level:.1f}% > {on_valve:.1f}%)")
             heating_should_be_enabled = True
         # Add check for enabling heating based only on valve level if temp unavailable? Optional.
-        elif current_temp is None and avg_valve is not None and avg_valve > on_valve:
-             logger.info(f"AutoHeat: Enabling heating based on valve level ({avg_valve:.1f}%) as temp is unavailable.")
+        elif current_temp is None and avg_level is not None and avg_level > on_valve:
+             logger.info(f"AutoHeat: Enabling heating based on valve level ({avg_level:.1f}%) as temp is unavailable.")
              heating_should_be_enabled = True
 
     target_heating_state = heating_should_be_enabled
@@ -175,7 +175,7 @@ async def _handle_auto_heating(cfg_mgr, pid, hm, ot_manager):
     if target_heating_state:
         # Ensure PID instance exists before using it
         if pid:
-            current_max_valve = hm.max_valve
+            current_level = hm.avg_active_valve
             # Use getter if available, otherwise direct access
             base_temp_ref = getattr(pid, 'get_base_temp_ref_outside', lambda: pid.base_temp_ref_outside)()
             current_temp_pid = hm.temperature if hm.temperature is not None else base_temp_ref
@@ -183,10 +183,10 @@ async def _handle_auto_heating(cfg_mgr, pid, hm, ot_manager):
             current_sun = hm.illumination if hm.illumination is not None else 0.0
             
             pid_output = pid.update(
-                current_max_valve, current_wind, current_temp_pid, current_sun
+                current_level, current_wind, current_temp_pid, current_sun
             )
             target_setpoint = pid_output # Use PID output
-            logger.info(f"PID Update: MaxValve={current_max_valve:.1f}, Temp={current_temp_pid:.1f}, Wind={current_wind:.1f}, Sun={current_sun:.0f} -> BoilerTemp={target_setpoint:.2f}")
+            logger.info(f"PID Update: MaxValve={current_level:.1f}, Temp={current_temp_pid:.1f}, Wind={current_wind:.1f}, Sun={current_sun:.0f} -> BoilerTemp={target_setpoint:.2f}")
         else:
             logger.error("AutoHeat: PID instance is None, cannot calculate setpoint. Using default.")
             # Fallback: Use manual setpoint or a safe default if PID is missing?

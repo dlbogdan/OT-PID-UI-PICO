@@ -117,7 +117,7 @@ class PIDController:
         
         return ff_base_temp
 
-    def update(self, current_max_valve, wind_speed, outside_temp, sun_illumination):
+    def update(self, current_level, wind_speed, outside_temp, sun_illumination):
         """
         Calculates the required boiler temperature based on current conditions.
         Uses time.ticks_ms() for time calculation.
@@ -127,7 +127,7 @@ class PIDController:
         try:
             # --- Input Scaling --- 
             # Clamp the raw input valve value to the configured min/max range
-            clamped_valve = max(self.valve_input_min, min(current_max_valve, self.valve_input_max))
+            clamped_valve = max(self.valve_input_min, min(current_level, self.valve_input_max))
             
             # Scale the clamped value from [min, max] to [0, 100] for PID calculation
             input_range = self.valve_input_max - self.valve_input_min

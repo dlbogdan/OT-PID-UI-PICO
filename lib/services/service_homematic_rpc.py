@@ -4,7 +4,7 @@ from services.service_async_http import JsonRpcClient, NetworkError
 import time
 import ujson
 from managers.manager_logger import Logger
-
+#todo: getters for avg_active_valve and max_active_valve etc would be nice
 logger = Logger()
 
 # --- Homematic CCU3 RPC Client ---
@@ -280,6 +280,7 @@ class HomematicDataService:
         self.reporting_valves = 0
         self.avg_valve = 0.0
         self.max_valve = 0.0
+        self.avg_active_valve = 0.0 # NEW: Average for active valves
         # Store the identified valve devices to avoid rediscovery
         self._valve_device_list = None # List of dicts: {'iface': str, 'addr': str, 'room_name': str}
         self.max_valve_room_name = "Unknown" # Room corresponding to max_valve
@@ -556,6 +557,7 @@ class HomematicDataService:
             self.avg_valve = 0.0
             self.max_valve = 0.0
             self.max_valve_room_name = "Unknown"
+            self.avg_active_valve = 0.0 # Reset active average too
             return True
         
         logger.info(f"HomematicService: Fetching levels for {len(valve_list_to_process)} valve devices...")
@@ -565,6 +567,8 @@ class HomematicDataService:
         max_position = 0.0
         fetch_error_occurred = False
         current_max_room_name = "Unknown"
+        total_active_position = 0.0 # NEW: Sum for active valves
+        active_report_count = 0 # NEW: Count for active valves
 
         for valve_info in valve_list_to_process:
             iface = valve_info['iface']
@@ -587,17 +591,28 @@ class HomematicDataService:
             if pos_val > max_position:
                 max_position = pos_val
                 current_max_room_name = room_name
+            
+            # NEW: Accumulate active valve data
+            if pos_val > 0:
+                total_active_position += pos_val
+                active_report_count += 1
         
         if report_count > 0:
             self.reporting_valves = report_count
             self.avg_valve = (total_position / report_count) * 100.0
             self.max_valve = max_position * 100.0
             self.max_valve_room_name = current_max_room_name
+            # NEW: Calculate active average
+            if active_report_count > 0:
+                self.avg_active_valve = (total_active_position / active_report_count) * 100.0
+            else:
+                self.avg_active_valve = 0.0
         else:
             self.reporting_valves = current_valve_reporting
             self.avg_valve = current_avg_valve
             self.max_valve = current_max_valve 
             self.max_valve_room_name = current_max_room
+            self.avg_active_valve = 0.0 # Reset if no reporting valves at all
 
         if fetch_error_occurred:
             logger.warning("HomematicService: Clearing cached valve list due to fetch error(s).")

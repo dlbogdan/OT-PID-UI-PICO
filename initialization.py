@@ -140,8 +140,8 @@ def setup_gui(gui, cfg, wifi, hm, ot_manager):
     mon.add_page(Page(lambda: f"Net: {wifi.get_ip() or 'NA'}",
                        lambda: f"CCU: {hm.is_ccu_connected()}"))
     # Page 2: Valve status
-    mon.add_page(Page(lambda: (f"Avg: {hm.avg_valve:.1f}%" if hm.is_ccu_connected() else "Valve Status"),
-                       lambda: (f"Max: {hm.max_valve:.1f}% {hm.valve_devices}/{hm.reporting_valves}" if hm.is_ccu_connected() else "CCU Offline")))
+    mon.add_page(Page(lambda: (f"Avg :{hm.avg_valve:.1f}%" if hm.is_ccu_connected() else "Valve Status"),
+                       lambda: (f"AvgAct:{hm.avg_active_valve:.1f}% {hm.reporting_valves}" if hm.is_ccu_connected() else "CCU Offline")))
     # Page 3: Setpoints (using manager getters)
     mon.add_page(Page(lambda: f"DHW SP: {ot_manager.get_dhw_setpoint()}",
                        lambda: f" CH SP: {ot_manager.get_control_setpoint()}"))
@@ -157,6 +157,9 @@ def setup_gui(gui, cfg, wifi, hm, ot_manager):
     # Page 7: Weather sensor illumination
     mon.add_page(Page(lambda: f"Sun: {hm.illumination:.0f}lux" if hm.has_weather_data and hm.illumination is not None else "Illumination: N/A",
                        lambda: f"Weather: {'Online' if hm.has_weather_data else 'Offline'}"))
+    # Page 8: OpenTherm Fault Status
+    mon.add_page(Page(lambda: f"Fault: {ot_manager.is_fault_present()}",
+                       lambda: f"Flags: {ot_manager.get_fault_flags()}")) # Assumes get_fault_flags returns a printable value
 
     gui.add_mode("monitoring", mon)
 
