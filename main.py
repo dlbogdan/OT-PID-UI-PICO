@@ -24,7 +24,7 @@ from managers.gui import GUIManager
 from main_tasks import (
     wifi_task, led_task, homematic_task, poll_buttons_task,
     error_rate_limiter_task, main_status_task,
-    pid_control_task, log_pid_output_task # Import the new task
+    pid_control_task, log_pid_output_task, log_memory_task, message_server_task # Import the new tasks
 )
 
 DEVELOPMENT_MODE=1
@@ -33,7 +33,7 @@ DEVELOPMENT_MODE=1
 #  Background task registration
 # --------------------------------------------------------------------------- #
 
-def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid, cfg):
+def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid, cfg, message_server):
     # Tasks are now imported from main_tasks.py
     tasks_to_schedule = [
         wifi_task(wifi), 
@@ -44,6 +44,8 @@ def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid, cfg):
         error_rate_limiter_task(hm, wifi, led),
         pid_control_task(pid, hm, ot_manager, cfg),
         log_pid_output_task(pid),
+        log_memory_task(), # Add memory logging task
+        message_server_task(message_server), # Add message server task
         ot_manager.start()
     ]
         
@@ -59,7 +61,7 @@ async def main():  # noqa: C901 (Complexity will be reduced)
     # Initialization 
     try:
         display, led, buttons, opentherm = initialize_hardware()
-        cfg, wifi, homematic, pid = initialize_services() 
+        cfg, wifi, homematic, pid, message_server = initialize_services() 
         gui = GUIManager(display, buttons) 
         setup_gui(gui, cfg, wifi, homematic, opentherm)
     except Exception as e: # Catch init errors
@@ -67,7 +69,7 @@ async def main():  # noqa: C901 (Complexity will be reduced)
     # Start Async Event Loop and Schedule Tasks
     loop = asyncio.get_event_loop()
     try:
-        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons, pid=pid, cfg=cfg)
+        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons, pid=pid, cfg=cfg, message_server=message_server)
     except Exception as e:
         logger.fatal("Scheduling tasks", str(e),resetmachine=not DEVELOPMENT_MODE)
         

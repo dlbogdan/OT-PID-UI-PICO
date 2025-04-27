@@ -1,4 +1,5 @@
 import uasyncio as asyncio
+import gc # Added import
 # from managers.manager_logger import Logger # No longer needed directly
 
 # Import the logger instance initialized in initialization.py
@@ -33,6 +34,7 @@ async def led_task(led):
 async def homematic_task(hm):
     while True:
         try:
+            gc.collect() # Collect garbage
             hm.update()
         except Exception as e:  # noqa: BLE001
             logger.error(f"HM: {e}")
@@ -115,23 +117,39 @@ async def _sync_dhw_control(cfg_mgr, ot_manager):
 
 async def _sync_pid_limits(cfg_mgr, pid):
     """Updates the PID controller's output limits based on configuration."""
-    # We still need to update the PID limit if the config value changes, 
-    # but we won't send the SH command repeatedly here.
-    # The SH command is typically set once or when changed via GUI/other means.
-    desired_max_ch_sp = cfg_mgr.get("OT", "MAX_HEATING_SETPOINT", 72.0)
-    # TODO: Add handling for pid.output_min if it becomes configurable
-    if pid: # Check if PID instance exists
-        # Use getter/setter if available, otherwise direct access
-        current_max = getattr(pid, 'get_output_max', lambda: pid.output_max)()
-        if abs(current_max - desired_max_ch_sp) > 0.1:
-            logger.info(f"SYNC: Updating PID output_max to {desired_max_ch_sp} (from {current_max:.1f})")
-            setter = getattr(pid, 'set_output_max', None)
-            if setter:
-                setter(desired_max_ch_sp)
-            else:
-                pid.output_max = desired_max_ch_sp
+    if not pid: 
+        return
 
-# --- Start Heating Mode Helpers (Called by _handle_heating_control) ---
+    # Get desired max heating setpoint from config
+    desired_max_ch_sp = cfg_mgr.get("OT", "MAX_HEATING_SETPOINT", 72.0)
+    
+    # Call the setter unconditionally; tolerance check is inside the setter
+    pid.set_output_max(desired_max_ch_sp)
+
+    # TODO: Add similar logic for output_min if it becomes configurable
+    # cfg_output_min = cfg_mgr.get("PID", "OUTPUT_MIN", 35.0) # Example
+    # pid.set_output_min(cfg_output_min)
+
+
+async def _sync_pid_params(cfg_mgr, pid):
+    """Synchronizes PID parameters from config to the PID instance by calling setters."""
+    if not pid: # Ensure pid instance exists
+        return 
+
+    # Call setters unconditionally. The setter itself handles the tolerance check.
+    pid.set_kp(cfg_mgr.get("PID", "KP", 0.05))
+    pid.set_ki(cfg_mgr.get("PID", "KI", 0.002))
+    pid.set_kd(cfg_mgr.get("PID", "KD", 0.01))
+    pid.set_setpoint(cfg_mgr.get("PID", "SETPOINT", 25.0))
+    pid.set_valve_input_min(cfg_mgr.get("PID", "VALVE_MIN", 8.0))
+    pid.set_valve_input_max(cfg_mgr.get("PID", "VALVE_MAX", 70.0))
+    pid.set_ff_wind_coeff(cfg_mgr.get("PID", "FF_WIND_COEFF", 0.1))
+    pid.set_ff_temp_coeff(cfg_mgr.get("PID", "FF_TEMP_COEFF", 1.1))
+    pid.set_ff_sun_coeff(cfg_mgr.get("PID", "FF_SUN_COEFF", 0.0001))
+    pid.set_ff_wind_interaction_coeff(cfg_mgr.get("PID", "FF_WIND_INTERACTION_COEFF", 0.008))
+    pid.set_base_temp_ref_outside(cfg_mgr.get("PID", "BASE_TEMP_REF_OUTSIDE", 10.0))
+    pid.set_base_temp_boiler(cfg_mgr.get("PID", "BASE_TEMP_BOILER", 45.0))
+
 
 async def _handle_auto_heating(cfg_mgr, pid, hm, ot_manager):
     """Determines target state and setpoint for Automatic Heating/PID mode."""
@@ -186,7 +204,7 @@ async def _handle_auto_heating(cfg_mgr, pid, hm, ot_manager):
                 current_level, current_wind, current_temp_pid, current_sun
             )
             target_setpoint = pid_output # Use PID output
-            logger.info(f"PID Update: MaxValve={current_level:.1f}, Temp={current_temp_pid:.1f}, Wind={current_wind:.1f}, Sun={current_sun:.0f} -> BoilerTemp={target_setpoint:.2f}")
+            logger.info(f"PID Update: current_level(valve)={current_level:.1f}, Temp={current_temp_pid:.1f}, Wind={current_wind:.1f}, Sun={current_sun:.0f} -> BoilerTemp={target_setpoint:.2f}")
         else:
             logger.error("AutoHeat: PID instance is None, cannot calculate setpoint. Using default.")
             # Fallback: Use manual setpoint or a safe default if PID is missing?
@@ -271,7 +289,10 @@ async def pid_control_task(pid, hm, ot_manager, cfg_mgr):
             # Sync basic states regardless of takeover
             await _sync_ot_takeover(cfg_mgr, ot_manager)
             await _sync_dhw_control(cfg_mgr, ot_manager)
-            await _sync_pid_limits(cfg_mgr, pid) # Sync PID limits even if controller isn't active
+            await _sync_pid_limits(cfg_mgr, pid) # Syncs pid.output_max
+            
+            # Sync PID parameters (Kp, Ki, Kd, Setpoint) from config
+            await _sync_pid_params(cfg_mgr, pid)
 
             # Perform heating control only if OT manager has control
             if ot_manager.is_active():
@@ -308,4 +329,35 @@ async def log_pid_output_task(pid):
         except Exception as e:
             logger.error(f"PID Log Task Error: {e}")
             # Avoid rapid looping on error
-            await asyncio.sleep(60) 
+            await asyncio.sleep(60)
+
+# --- New Task for Memory Logging ---
+
+async def log_memory_task():
+    """Periodically logs the free memory."""
+    logger.info("Starting Free Memory logging task.")
+    await asyncio.sleep(5) # Small initial delay
+
+    while True:
+        try:
+            free_memory = gc.mem_free()
+            logger.info(f"Free Memory: {free_memory} bytes")
+            gc.collect() # Optional: Run garbage collection after logging
+            await asyncio.sleep(60)
+
+        except Exception as e:
+            logger.error(f"Memory Log Task Error: {e}")
+            # Avoid rapid looping on error
+            await asyncio.sleep(60)
+
+# --- New Task for Message Server ---
+
+async def message_server_task(server):
+    """Runs the message server's main loop."""
+    if server:
+        await server.run() # The run method now contains its own loop
+    else:
+        logger.warning("Message Server task started, but server instance is None.")
+        # Keep task alive but do nothing if server isn't there
+        while True:
+            await asyncio.sleep(3600) # Sleep for a long time 

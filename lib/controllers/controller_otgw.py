@@ -3,6 +3,7 @@ from machine import UART, Pin
 import time
 import platform_spec as cfg
 from managers.manager_logger import Logger
+import gc
 
 logger = Logger()
 # OTGW Response Codes
@@ -186,6 +187,8 @@ class OpenThermController():
 
     def _parse_and_update_status(self, source, msg_type_raw, data_id, val_hb, val_lb):
         """Parses received status message data and updates _status_data."""
+        gc.collect() # Collect garbage
+
         parsed_value = None
         raw_value = (val_hb << 8) | val_lb
 

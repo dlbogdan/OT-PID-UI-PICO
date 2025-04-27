@@ -27,13 +27,24 @@ class Logger: #singleton
         self._max_error_history = 10
         self._error_rate_limit = 3
         self.error_rate_limiter_reached = False
+        self._message_server = None # Add placeholder for the server instance
         print(f"Logger initialized with debug level {self._debug_level}")
+
+    def set_message_server(self, server_instance):
+        """Injects the MessageServer instance for network logging."""
+        self._message_server = server_instance
+        if self._message_server:
+            print("Logger: MessageServer instance linked.")
 
     def get_level(self):
         return self._debug_level
     
     def fatal(self, error_type, message, resetmachine:bool):
         """Logs a fatal error to flash. Only writes if different from last error."""
+        # Network send first (if configured)
+        if self._message_server:
+            self._message_server.send(f"FATAL: {error_type} - {message}")
+        
         new_error = {
             "timestamp": time.time(),
             "type": error_type,
@@ -57,6 +68,8 @@ class Logger: #singleton
     def error(self, message):
         """Logs a non-fatal error to log.txt and tracks it for rate limiting."""
         print(f"ERROR: {message}")
+        if self._message_server:
+            self._message_server.send(f"ERROR: {message}")
         self._log_to_file("ERROR", f"{message}")
         self._track_error_rate()
         self._add_to_history("ERROR", message)
@@ -65,23 +78,31 @@ class Logger: #singleton
         """Logs a warning message to the history."""
         if self._debug_level>=1:
             print(f"WARNING: {message}")
+            if self._message_server:
+                 self._message_server.send(f"WARNING: {message}")
         self._add_to_history("WARNING", message)
 
     def info(self, message):
         """Logs an informational message."""
         if self._debug_level>=2:
             print(f"INFO: {message}")
+            if self._message_server:
+                self._message_server.send(f"INFO: {message}")
         #self._add_to_history("INFO", message) 
 
     def debug(self, message):
         """Logs a debug message."""
         if self._debug_level>=3:
             print(f"DEBUG: {message}")
+            if self._message_server:
+                self._message_server.send(f"DEBUG: {message}")
 
     def trace(self, message):
         """Logs a trace message."""
         if self._debug_level>=4:
             print(f"TRACE: {message}")
+            if self._message_server:
+                self._message_server.send(f"TRACE: {message}")
 
     def _log_to_file(self,level, message):
         """Logs a message to the log file."""

@@ -7,6 +7,9 @@ logger = Logger()
 # Detect if running in MicroPython-like environment with ticks_ms
 _use_ticks_ms = hasattr(time, 'ticks_ms')
 
+# Define a common tolerance for float comparisons within the class
+_FLOAT_TOLERANCE = 1e-6
+
 class PIDController:
     """
     A PID controller designed to regulate boiler water temperature based on
@@ -89,10 +92,115 @@ class PIDController:
         return self.output_max
 
     def set_output_min(self, output_min):
-        self.output_min = output_min
+        if abs(self.output_min - output_min) > _FLOAT_TOLERANCE:
+            old_val = self.output_min
+            self.output_min = output_min
+            logger.info(f"PID output_min updated from {old_val} to: {output_min}")
+            # Recalculate default integral limits if Ki is non-zero and limits were default
+            # Note: This logic is simplified; assumes limits were default if they match calculation
+            if self.ki != 0 and self._integral_min is not None and self._integral_max is not None:
+                default_integral_range = abs((self.output_max - self.output_min) * 0.5 / self.ki)
+                if abs(self._integral_min - (-default_integral_range)) < _FLOAT_TOLERANCE and \
+                   abs(self._integral_max - default_integral_range) < _FLOAT_TOLERANCE:
+                    self._integral_min = -default_integral_range
+                    self._integral_max = default_integral_range
+                    logger.info("Recalculated default integral limits due to output_min change.")
 
     def set_output_max(self, output_max):
-        self.output_max = output_max
+        if abs(self.output_max - output_max) > _FLOAT_TOLERANCE:
+            old_val = self.output_max
+            self.output_max = output_max
+            logger.info(f"PID output_max updated from {old_val} to: {output_max}")
+            # Recalculate default integral limits similar to set_output_min
+            if self.ki != 0 and self._integral_min is not None and self._integral_max is not None:
+                default_integral_range = abs((self.output_max - self.output_min) * 0.5 / self.ki)
+                if abs(self._integral_min - (-default_integral_range)) < _FLOAT_TOLERANCE and \
+                   abs(self._integral_max - default_integral_range) < _FLOAT_TOLERANCE:
+                    self._integral_min = -default_integral_range
+                    self._integral_max = default_integral_range
+                    logger.info("Recalculated default integral limits due to output_max change.")
+
+    def set_kp(self, kp):
+        """Sets the Proportional gain (Kp)."""
+        if abs(self.kp - kp) > _FLOAT_TOLERANCE:
+            logger.info(f"PID Kp updated from {self.kp} to: {kp}")
+            self.kp = kp
+
+    def set_ki(self, ki):
+        """Sets the Integral gain (Ki)."""
+        if abs(self.ki - ki) > _FLOAT_TOLERANCE:
+            logger.info(f"PID Ki updated from {self.ki} to: {ki}")
+            self.ki = ki
+            # Potentially recalculate default integral limits if Ki changed significantly?
+            # Or maybe reset integral term? Add logic here if needed.
+            if self.ki == 0:
+                 self._integral = 0.0 # Reset integral if Ki becomes 0
+
+    def set_kd(self, kd):
+        """Sets the Derivative gain (Kd)."""
+        if abs(self.kd - kd) > _FLOAT_TOLERANCE:
+            logger.info(f"PID Kd updated from {self.kd} to: {kd}")
+            self.kd = kd
+
+    def set_setpoint(self, setpoint):
+        """Sets the target setpoint."""
+        if abs(self.setpoint - setpoint) > _FLOAT_TOLERANCE:
+            logger.info(f"PID Setpoint updated from {self.setpoint} to: {setpoint}")
+            self.setpoint = setpoint
+
+    def set_valve_input_min(self, valve_min):
+        """Sets the minimum valve input value for scaling."""
+        if valve_min >= self.valve_input_max:
+            logger.error(f"Invalid valve_input_min ({valve_min}): must be < valve_input_max ({self.valve_input_max})")
+            return
+        if abs(self.valve_input_min - valve_min) > _FLOAT_TOLERANCE:
+            logger.info(f"PID valve_input_min updated from {self.valve_input_min} to: {valve_min}")
+            self.valve_input_min = valve_min
+
+    def set_valve_input_max(self, valve_max):
+        """Sets the maximum valve input value for scaling."""
+        if valve_max <= self.valve_input_min:
+            logger.error(f"Invalid valve_input_max ({valve_max}): must be > valve_input_min ({self.valve_input_min})")
+            return
+        if abs(self.valve_input_max - valve_max) > _FLOAT_TOLERANCE:
+            logger.info(f"PID valve_input_max updated from {self.valve_input_max} to: {valve_max}")
+            self.valve_input_max = valve_max
+
+    def set_ff_wind_coeff(self, coeff):
+        """Sets the feed-forward coefficient for wind speed."""
+        if abs(self.ff_wind_coeff - coeff) > _FLOAT_TOLERANCE:
+            logger.info(f"PID ff_wind_coeff updated from {self.ff_wind_coeff} to: {coeff}")
+            self.ff_wind_coeff = coeff
+
+    def set_ff_temp_coeff(self, coeff):
+        """Sets the feed-forward coefficient for outside temperature."""
+        if abs(self.ff_temp_coeff - coeff) > _FLOAT_TOLERANCE:
+            logger.info(f"PID ff_temp_coeff updated from {self.ff_temp_coeff} to: {coeff}")
+            self.ff_temp_coeff = coeff
+
+    def set_ff_sun_coeff(self, coeff):
+        """Sets the feed-forward coefficient for sun illumination."""
+        if abs(self.ff_sun_coeff - coeff) > _FLOAT_TOLERANCE:
+            logger.info(f"PID ff_sun_coeff updated from {self.ff_sun_coeff} to: {coeff}")
+            self.ff_sun_coeff = coeff
+
+    def set_ff_wind_interaction_coeff(self, coeff):
+        """Sets the feed-forward coefficient for wind/temperature interaction."""
+        if abs(self.ff_wind_interaction_coeff - coeff) > _FLOAT_TOLERANCE:
+            logger.info(f"PID ff_wind_interaction_coeff updated from {self.ff_wind_interaction_coeff} to: {coeff}")
+            self.ff_wind_interaction_coeff = coeff
+
+    def set_base_temp_ref_outside(self, temp):
+        """Sets the base reference outside temperature."""
+        if abs(self.base_temp_ref_outside - temp) > _FLOAT_TOLERANCE:
+            logger.info(f"PID base_temp_ref_outside updated from {self.base_temp_ref_outside} to: {temp}")
+            self.base_temp_ref_outside = temp
+
+    def set_base_temp_boiler(self, temp):
+        """Sets the base boiler temperature reference."""
+        if abs(self.base_temp_boiler - temp) > _FLOAT_TOLERANCE:
+            logger.info(f"PID base_temp_boiler updated from {self.base_temp_boiler} to: {temp}")
+            self.base_temp_boiler = temp
 
     def _calculate_feed_forward(self, wind_speed, outside_temp, sun_illumination):
         """Calculates the feed-forward base boiler temperature, including wind interaction."""
@@ -225,10 +333,10 @@ class PIDController:
 
     def set_gains(self, kp, ki, kd):
         """Allows updating PID gains dynamically."""
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
-        # Note: Does not automatically recalculate integral limits if they were manually set.
-        # If default limits were used, they might become suboptimal if Ki changes drastically.
-        print(f"PID gains updated: Kp={kp}, Ki={ki}, Kd={kd}")
+        self.set_kp(kp)
+        self.set_ki(ki)
+        self.set_kd(kd)
+        # Note: set_gains now uses individual setters, logging is handled there.
+        # Keep the print for overall confirmation if desired, or remove.
+        # print(f"PID gains updated via set_gains: Kp={kp}, Ki={ki}, Kd={kd}")
 

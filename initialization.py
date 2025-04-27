@@ -20,6 +20,7 @@ from managers.gui import (
 from flags import DEVELOPMENT_MODE
 from managers.manager_logger import Logger
 from controllers.controller_pid import PIDController
+from services.service_messageserver import MessageServer
 
 logger = Logger()
 
@@ -101,10 +102,17 @@ def setup_gui(gui, cfg, wifi, hm, ot_manager):
             FloatField("On Valve >", cfg.get("AUTOH", "ON_VALVE_LEVEL", 8.0), lambda v: cfg.set("AUTOH", "ON_VALVE_LEVEL", v)),
         ]),
         Menu("PID Config", [
-            FloatField("Prop. Gain (Kp)", cfg.get("PID", "KP", 0.05), lambda v: cfg.set("PID", "KP", v), precision=5),
-            FloatField("Integ. Gain (Ki)", cfg.get("PID", "KI", 0.002), lambda v: cfg.set("PID", "KI", v), precision=5),
-            FloatField("Deriv. Gain (Kd)", cfg.get("PID", "KD", 0.01), lambda v: cfg.set("PID", "KD", v), precision=5),
-            FloatField("Setpoint (Valve%)", cfg.get("PID", "SETPOINT", 25.0), lambda v: cfg.set("PID", "SETPOINT", v)),
+            FloatField("Prop. Gain (Kp)", cfg.get("PID", "KP", 0.05), 
+                       lambda v: cfg.set("PID", "KP", v), 
+                       precision=5), 
+            FloatField("Integ. Gain (Ki)", cfg.get("PID", "KI", 0.002), 
+                       lambda v: cfg.set("PID", "KI", v), 
+                       precision=5),
+            FloatField("Deriv. Gain (Kd)", cfg.get("PID", "KD", 0.01), 
+                       lambda v: cfg.set("PID", "KD", v), 
+                       precision=5),
+            FloatField("Setpoint (Valve%)", cfg.get("PID", "SETPOINT", 25.0), 
+                       lambda v: cfg.set("PID", "SETPOINT", v)),
             FloatField("Valve Min %", cfg.get("PID", "VALVE_MIN", 8.0), lambda v: cfg.set("PID", "VALVE_MIN", v)),
             FloatField("Valve Max %", cfg.get("PID", "VALVE_MAX", 70.0), lambda v: cfg.set("PID", "VALVE_MAX", v)),
             FloatField("FF Wind Coeff", cfg.get("PID", "FF_WIND_COEFF", 0.1), lambda v: cfg.set("PID", "FF_WIND_COEFF", v)),
@@ -179,7 +187,7 @@ def initialize_services():
     logger.info("Initialising services...")
     cfg = ConfigManager(ConfigFileName(), ConfigFileName(factory=True))
     
-    # Use get() method directly for initial service setup
+    # --- Instantiate Core Services ---
     wifi = WiFiManager(
         cfg.get("WIFI", "SSID"), 
         cfg.get("WIFI", "PASS"), 
@@ -190,8 +198,16 @@ def initialize_services():
         cfg.get("CCU3", "USER"), 
         cfg.get("CCU3", "PASS"), 
         cfg.get("CCU3", "VALVE_DEVTYPE", "HmIP-eTRV"),
-        weather_device_type=str(cfg.get("CCU3", "WEATHER_DEVTYPE", "HmIP-SWO")) # Keep str conversion for safety
+        weather_device_type=str(cfg.get("CCU3", "WEATHER_DEVTYPE", "HmIP-SWO"))
     )
+    
+    # --- Instantiate Message Server ---
+    # Could make port configurable later if needed
+    message_server = MessageServer(port=23) 
+    # Inject the server into the existing logger instance
+    logger.set_message_server(message_server)
+
+    # --- Instantiate PID Controller ---
     logger.info("Instantiating PID Controller...")
     pid = PIDController(
         # Use cfg_mgr.get directly - type hint in ConfigManager should help linter
@@ -215,5 +231,5 @@ def initialize_services():
     )
     logger.info("PID Controller instantiated.")
     logger.info("Services initialised.")
-    # Return manager and services
-    return cfg, wifi, hm, pid
+    # Return manager and services, including the new message_server
+    return cfg, wifi, hm, pid, message_server
