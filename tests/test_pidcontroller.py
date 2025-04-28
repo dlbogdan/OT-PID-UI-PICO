@@ -11,7 +11,7 @@ if __name__ == "__main__":
 
     pid = PIDController(kp=kp_init, ki=ki_init, kd=kd_init, setpoint=setpoint_init, 
                       output_min=35, output_max=75, ff_temp_coeff=1.1,
-                      ff_wind_interaction_coeff=0.008,
+                      ff_wind_chill_coeff=0.008,
                       valve_input_min=8.0, valve_input_max=70.0,
                       ff_sun_coeff=0.0001, time_factor=60) # Use the reduced value in example too
 
@@ -23,7 +23,7 @@ if __name__ == "__main__":
 
 
     print(f"Initial PID: Kp={pid.kp}, Ki={pid.ki}, Kd={pid.kd}, Setpoint={pid.setpoint}")
-    print(f"FF Coeffs: Temp={pid.ff_temp_coeff}, Wind={pid.ff_wind_coeff}, Sun={pid.ff_sun_coeff}, WindInteract={pid.ff_wind_interaction_coeff}") 
+    print(f"FF Coeffs: Temp={pid.ff_temp_coeff}, Wind={pid.ff_wind_coeff}, Sun={pid.ff_sun_coeff}, WindInteract={pid.ff_wind_chill_coeff}") 
     print(f"Valve Input Scaling: [{pid.valve_input_min}, {pid.valve_input_max}] => [0, 100]") # Print scaling info
     print(f"Output Limits: [{pid.output_min}, {pid.output_max}]")
     print(f"Integral Limits (internal): [{pid._integral_min}, {pid._integral_max}]")

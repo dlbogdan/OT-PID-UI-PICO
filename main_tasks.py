@@ -84,6 +84,23 @@ async def main_status_task(hm, wifi, led):
 
 # --- Start Refactored PID Control Helper Functions ---
 
+# --- Module-level flags for AutoHeat override ---
+_force_autoheat_on_next_cycle = False
+_force_autoheat_off_next_cycle = False
+
+def trigger_autoheat_on():
+    """Sets the flag to force heating ON in the next AutoHeat cycle."""
+    global _force_autoheat_on_next_cycle
+    _force_autoheat_on_next_cycle = True
+    logger.info("ACTION: Triggered AutoHeat ON for next cycle.")
+
+def trigger_autoheat_off():
+    """Sets the flag to force heating OFF in the next AutoHeat cycle."""
+    global _force_autoheat_off_next_cycle
+    _force_autoheat_off_next_cycle = True
+    logger.info("ACTION: Triggered AutoHeat OFF for next cycle.")
+# --- End Override Flags/Functions ---
+
 async def _sync_ot_takeover(cfg_mgr, ot_manager):
     """Ensures OTGW controller takeover state matches configuration."""
     desired_takeover = cfg_mgr.get("OT", "ENABLE_CONTROLLER", False)
@@ -128,8 +145,8 @@ async def _sync_pid_limits(cfg_mgr, pid):
     pid.set_output_max(desired_max_ch_sp)
 
     # TODO: Add similar logic for output_min if it becomes configurable
-    # cfg_output_min = cfg_mgr.get("PID", "OUTPUT_MIN", 35.0) # Example
-    # pid.set_output_min(cfg_output_min)
+    cfg_output_min = cfg_mgr.get("PID", "MIN_HEATING_SETPOINT", 35.0)
+    pid.set_output_min(cfg_output_min)
 
 
 async def _sync_pid_params(cfg_mgr, pid):
@@ -147,7 +164,7 @@ async def _sync_pid_params(cfg_mgr, pid):
     pid.set_ff_wind_coeff(cfg_mgr.get("PID", "FF_WIND_COEFF", 0.1))
     pid.set_ff_temp_coeff(cfg_mgr.get("PID", "FF_TEMP_COEFF", 1.1))
     pid.set_ff_sun_coeff(cfg_mgr.get("PID", "FF_SUN_COEFF", 0.0001))
-    pid.set_ff_wind_interaction_coeff(cfg_mgr.get("PID", "FF_WIND_INTERACTION_COEFF", 0.008))
+    pid.set_ff_wind_chill_coeff(cfg_mgr.get("PID", "FF_WIND_CHILL_COEFF", 0.008))
     pid.set_base_temp_ref_outside(cfg_mgr.get("PID", "BASE_TEMP_REF_OUTSIDE", 10.0))
     pid.set_base_temp_boiler(cfg_mgr.get("PID", "BASE_TEMP_BOILER", 41.0))
     pid.set_output_deadband(cfg_mgr.get("PID", "OUTPUT_DEADBAND", 0.5)) # Default 0.5
@@ -157,39 +174,57 @@ async def _handle_auto_heating(cfg_mgr, pid, hm, ot_manager):
     """Determines target state and setpoint for Automatic Heating/PID mode."""
     logger.debug("MODE: Automatic Heating/PID")
     
+    global _force_autoheat_on_next_cycle, _force_autoheat_off_next_cycle
+    
     target_heating_state = False # Default state is OFF
     target_setpoint = 10.0    # Default CS=10 when heating is OFF
+    override_active = False
+
+    # --- Check for manual overrides --- #
+    if _force_autoheat_on_next_cycle:
+        logger.info("AutoHeat OVERRIDE: Forcing heating ON this cycle.")
+        target_heating_state = True
+        _force_autoheat_on_next_cycle = False # Consume the flag
+        override_active = True
+    elif _force_autoheat_off_next_cycle:
+        logger.info("AutoHeat OVERRIDE: Forcing heating OFF this cycle.")
+        target_heating_state = False
+        _force_autoheat_off_next_cycle = False # Consume the flag
+        override_active = True
 
     # --- Auto Heating Logic --- #
     current_ch_state = ot_manager.is_ch_enabled() 
-    heating_should_be_enabled = current_ch_state # Assume current state unless changed
 
-    current_temp = hm.temperature
-    avg_level = hm.avg_active_valve
-    # Use cfg_mgr.get directly for float values
-    off_temp = cfg_mgr.get("AUTOH", "OFF_TEMP", 19.0) 
-    off_valve = cfg_mgr.get("AUTOH", "OFF_VALVE_LEVEL", 5.0)
-    on_temp = cfg_mgr.get("AUTOH", "ON_TEMP", 15.0)
-    on_valve = cfg_mgr.get("AUTOH", "ON_VALVE_LEVEL", 12.0)
+    # Run normal logic ONLY if no override was active
+    if not override_active:
+        heating_should_be_enabled = current_ch_state # Assume current state unless changed
 
-    if current_ch_state: # Currently ON? Check OFF conditions
-        if current_temp is not None and current_temp >= off_temp:
-            logger.info(f"AutoHeat: Condition met to disable heating (Temp {current_temp:.1f}C >= {off_temp:.1f}C)")
-            heating_should_be_enabled = False
-        elif avg_level is not None and avg_level < off_valve:
-            logger.info(f"AutoHeat: Condition met to disable heating (Avg Valve {avg_level:.1f}% < {off_valve:.1f}%)")
-            heating_should_be_enabled = False
-    else: # Currently OFF? Check ON conditions
-        if (current_temp is not None and avg_level is not None and
-            current_temp < on_temp and avg_level > on_valve):
-            logger.info(f"AutoHeat: Condition met to enable heating (Temp {current_temp:.1f}C < {on_temp:.1f}C AND Avg Valve {avg_level:.1f}% > {on_valve:.1f}%)")
-            heating_should_be_enabled = True
-        # Add check for enabling heating based only on valve level if temp unavailable? Optional.
-        elif current_temp is None and avg_level is not None and avg_level > on_valve:
-             logger.info(f"AutoHeat: Enabling heating based on valve level ({avg_level:.1f}%) as temp is unavailable.")
-             heating_should_be_enabled = True
+        current_temp = hm.temperature
+        avg_level = hm.avg_active_valve
+        # Use cfg_mgr.get directly for float values
+        off_temp = cfg_mgr.get("AUTOH", "OFF_TEMP", 19.0)
+        off_valve = cfg_mgr.get("AUTOH", "OFF_VALVE_LEVEL", 5.0)
+        on_temp = cfg_mgr.get("AUTOH", "ON_TEMP", 15.0)
+        on_valve = cfg_mgr.get("AUTOH", "ON_VALVE_LEVEL", 12.0)
 
-    target_heating_state = heating_should_be_enabled
+        if current_ch_state: # Currently ON? Check OFF conditions
+            if current_temp is not None and current_temp >= off_temp:
+                logger.info(f"AutoHeat: Condition met to disable heating (Temp {current_temp:.1f}C >= {off_temp:.1f}C)")
+                heating_should_be_enabled = False
+            elif avg_level is not None and avg_level < off_valve:
+                logger.info(f"AutoHeat: Condition met to disable heating (Avg Valve {avg_level:.1f}% < {off_valve:.1f}%)")
+                heating_should_be_enabled = False
+        else: # Currently OFF? Check ON conditions
+            if (current_temp is not None and avg_level is not None and
+                current_temp < on_temp and avg_level > on_valve):
+                logger.info(f"AutoHeat: Condition met to enable heating (Temp {current_temp:.1f}C < {on_temp:.1f}C AND Avg Valve {avg_level:.1f}% > {on_valve:.1f}%)")
+                heating_should_be_enabled = True
+            # Add check for enabling heating based only on valve level if temp unavailable? Optional.
+            elif current_temp is None and avg_level is not None and avg_level > on_valve:
+                 logger.info(f"AutoHeat: Enabling heating based on valve level ({avg_level:.1f}%) as temp is unavailable.")
+                 heating_should_be_enabled = True
+
+        target_heating_state = heating_should_be_enabled
 
     # If heating should be ON, calculate PID setpoint
     if target_heating_state:
@@ -363,3 +398,16 @@ async def message_server_task(server):
         # Keep task alive but do nothing if server isn't there
         while True:
             await asyncio.sleep(3600) # Sleep for a long time 
+
+async def heating_controller_task(heating_controller):
+    """Periodically runs the heating controller's update method."""
+    logger.info("Starting Heating Controller task")
+    await asyncio.sleep(5)  # Initial delay
+
+    while True:
+        try:
+            await heating_controller.update()
+            await asyncio.sleep(30)  # Use configurable interval if needed
+        except Exception as e:
+            logger.error(f"Heating Controller Task Error: {e}")
+            await asyncio.sleep(30)  # Avoid rapid looping on error 

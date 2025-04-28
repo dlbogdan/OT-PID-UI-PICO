@@ -20,7 +20,7 @@ class PIDController:
                  output_min=35.0, output_max=70.0, 
                  integral_min=None, integral_max=None,
                  ff_wind_coeff=0.1, ff_temp_coeff=1.0, ff_sun_coeff=0.0001,
-                 ff_wind_interaction_coeff=0.005, # How much more wind matters when colder
+                 ff_wind_chill_coeff=0.005, # How much more wind matters when colder
                  base_temp_ref_outside=10.0, base_temp_boiler=41.0,
                  valve_input_min=0.0, valve_input_max=100.0, # Add valve input scaling limits
                  time_factor=1.0, # Simulation time acceleration factor
@@ -40,7 +40,7 @@ class PIDController:
             ff_wind_coeff (float): Feed-forward coefficient for wind speed (degC per km/h).
             ff_temp_coeff (float): Feed-forward coefficient for outside temperature (degC per degC difference).
             ff_sun_coeff (float): Feed-forward coefficient for sun illumination (degC reduction per lux).
-            ff_wind_interaction_coeff (float): Scales wind effect based on temp diff below reference.
+            ff_wind_chill_coeff (float): Scales wind effect based on temp diff below reference.
             base_temp_ref_outside (float): Reference outside temperature (deg C) for base calculation.
             base_temp_boiler (float): Base boiler temperature (deg C) at reference outside temp.
             valve_input_min (float): Minimum value of the raw valve input to consider (scale starts here).
@@ -58,7 +58,10 @@ class PIDController:
 
         # Calculate default integral limits if not provided
         if ki != 0:
-            default_integral_range = abs((output_max - output_min) * 0.5 / ki) # Ensure positive range
+            default_integral_range = abs((output_max - output_min) * 0.5 / ki) # Clever windup prevention 
+                                                                               # by ensuring the maximum temperature
+                                                                               # contribution is half of the 
+                                                                               # output range  
             self._integral_min = integral_min if integral_min is not None else -default_integral_range
             self._integral_max = integral_max if integral_max is not None else default_integral_range
         else:
@@ -72,7 +75,7 @@ class PIDController:
         self.ff_sun_coeff = ff_sun_coeff
         self.base_temp_ref_outside = base_temp_ref_outside
         self.base_temp_boiler = base_temp_boiler
-        self.ff_wind_interaction_coeff = ff_wind_interaction_coeff # Store the new coefficient
+        self.ff_wind_chill_coeff = ff_wind_chill_coeff # Store the new coefficient
         self.valve_input_min = valve_input_min
         self.valve_input_max = valve_input_max
         self.time_factor = time_factor # Store time factor
@@ -188,11 +191,11 @@ class PIDController:
             logger.info(f"PID ff_sun_coeff updated from {self.ff_sun_coeff} to: {coeff}")
             self.ff_sun_coeff = coeff
 
-    def set_ff_wind_interaction_coeff(self, coeff):
-        """Sets the feed-forward coefficient for wind/temperature interaction."""
-        if abs(self.ff_wind_interaction_coeff - coeff) > _FLOAT_TOLERANCE:
-            logger.info(f"PID ff_wind_interaction_coeff updated from {self.ff_wind_interaction_coeff} to: {coeff}")
-            self.ff_wind_interaction_coeff = coeff
+    def set_ff_wind_chill_coeff(self, coeff):
+        """Sets the feed-forward coefficient for wind/temperature scaling."""
+        if abs(self.ff_wind_chill_coeff - coeff) > _FLOAT_TOLERANCE:
+            logger.info(f"PID ff_wind_interaction_coeff updated from {self.ff_wind_chill_coeff} to: {coeff}")
+            self.ff_wind_chill_coeff = coeff
 
     def set_base_temp_ref_outside(self, temp):
         """Sets the base reference outside temperature."""
@@ -230,11 +233,11 @@ class PIDController:
         # Interaction wind adjustment (extra effect when colder than reference)
         # Only applies when outside_temp < base_temp_ref_outside
         temp_diff_for_wind = max(0, self.base_temp_ref_outside - outside_temp)
-        interaction_adjustment = self.ff_wind_interaction_coeff * wind_speed * temp_diff_for_wind
+        windchill_adjustment = self.ff_wind_chill_coeff * wind_speed * temp_diff_for_wind
 
-        logger.debug(f"FF Calc: WindSpeed={wind_speed:.1f}, BaseWindAdj={base_wind_adjustment:.2f}, InteractionAdj={interaction_adjustment:.2f}")
+        logger.debug(f"FF Calc: WindSpeed={wind_speed:.1f}, BaseWindAdj={base_wind_adjustment:.2f}, InteractionAdj={windchill_adjustment:.2f}")
 
-        total_wind_adjustment = base_wind_adjustment + interaction_adjustment
+        total_wind_adjustment = base_wind_adjustment + windchill_adjustment
 
         # Sun adjustment (more sun -> lower boiler temp)
         # Use max(0, ...) to prevent negative sun adjustment if coeff is negative
@@ -298,19 +301,20 @@ class PIDController:
 
             # Proportional term
             p_term = self.kp * error
-            if self.output_min < output_temp < self.output_max: #anti-windup todo: do we really need this?
-             # Integral term with anti-windup (Corrected Logic)
-                 self._integral += error * simulated_dt # Update internal integral state first
-             # else: # Potentially log why integral wasn't updated (anti-windup active)
-             #    logger.debug("PID Calc: Anti-windup active, integral not updated.")
+
+            # Integral term 
+            integral_change = error * simulated_dt
+            old_integral = self._integral
+            self._integral += integral_change
+            logger.debug(f"PID Integral Update: Adding {integral_change:.4f} to {old_integral:.4f} -> {self._integral:.4f}")
             
-            # Clamp the accumulated integral state
+            # Clamp the updated integral state
             if self._integral_max is not None:
                 self._integral = min(self._integral, self._integral_max)
             if self._integral_min is not None:
                 self._integral = max(self._integral, self._integral_min)
                 
-            logger.debug(f"PID Calc: Integral Accumulator = {self._integral:.4f}")
+            logger.debug(f"PID Calc: Integral Accumulator = {self._integral:.5f}")
                 
             # Calculate I term based on the clamped integral state
             i_term = self.ki * self._integral 
@@ -319,12 +323,12 @@ class PIDController:
             d_term = 0.0
             # Calculate derivative only if dt is valid and reasonable (e.g., < 5s)
             # Avoids derivative kick on first run or after long pauses
-            if self._last_time_ref is not None and 0 < simulated_dt < (5.0 * self.time_factor):
+            if self._last_time_ref is not None and 0 < simulated_dt < (35.0 * self.time_factor):
                  # Calculate derivative using simulated time delta
                  derivative = (error - self._previous_error) / simulated_dt 
                  d_term = self.kd * derivative
             
-            logger.debug(f"PID Calc: P={p_term:.2f}, I={i_term:.2f}, D={d_term:.2f} (dt={simulated_dt:.3f}s)")
+            logger.debug(f"PID Calc: P={p_term:.5f}, I={i_term:.5f}, D={d_term:.5f} (dt={simulated_dt:.3f}s)")
             
             # Calculate base temperature from feed-forward
             ff_base_temp = self._calculate_feed_forward(wind_speed, outside_temp, sun_illumination)
@@ -335,7 +339,7 @@ class PIDController:
             # Final output: Base temperature adjusted by PID
             output_temp = ff_base_temp + pid_adjustment
 
-            logger.debug(f"PID Calc: Raw Output (Pre-Clamp) = FF({ff_base_temp:.2f}) + PIDAdj({pid_adjustment:.2f}) = {output_temp:.2f}")
+            logger.debug(f"PID Calc: Raw Output (Pre-Clamp) = FF({ff_base_temp:.2f}) + PIDAdj({pid_adjustment:.3f}) = {output_temp:.2f}")
 
             # Final clamping of the combined result:
             output_temp = max(self.output_min, min(self.output_max, output_temp))

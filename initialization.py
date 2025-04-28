@@ -8,6 +8,7 @@ from platform_spec import (
 )
 from controllers.controller_display import DisplayController
 from controllers.controller_otgw import OpenThermController
+from controllers.controller_heating import HeatingController
 from managers.manager_config import ConfigManager, factory_reset
 from managers.manager_wifi import WiFiManager
 from managers.manager_otgw import OpenThermManager
@@ -35,19 +36,16 @@ def initialize_hardware():
     logger.info("Initialising hardware...")
     
     i2c = HWi2c()
-    uart = HWUART()
     mcp = HWMCP(i2c)
     lcd = HWLCD(mcp)
     display = DisplayController(lcd)
     led = HWRGBLed(mcp)
     buttons = HWButtons(mcp)
-    ot_controller = OpenThermController(uart)
-    opentherm = OpenThermManager(ot_controller)
     
     logger.info("Hardware initialised.")
     
     # Return all initialized hardware components
-    return display, led, buttons, opentherm
+    return display, led, buttons
 
 
 # --------------------------------------------------------------------------- #
@@ -58,7 +56,7 @@ def initialize_hardware():
 #  GUI Setup
 # --------------------------------------------------------------------------- #
 
-def setup_gui(gui, cfg, wifi, hm, ot_manager):
+def setup_gui(gui, cfg, wifi, hm, ot_manager, pid, heating_controller):
     """Builds the menu structure and sets up GUI modes."""
     logger.info("Setting up GUI...")
     
@@ -95,13 +93,16 @@ def setup_gui(gui, cfg, wifi, hm, ot_manager):
             BoolField("Enforce DHW SP", cfg.get("OT", "ENFORCE_DHW_SETPOINT", False), lambda v: cfg.set("OT", "ENFORCE_DHW_SETPOINT", v)),
         ]),
         Menu("Auto Heating", [
+            Action("Trigger Turn ON", heating_controller.trigger_heating_on),
+            Action("Trigger Turn OFF", heating_controller.trigger_heating_off),
             BoolField("Enable Auto", cfg.get("AUTOH", "ENABLE", True), lambda v: cfg.set("AUTOH", "ENABLE", v)),
             FloatField("Off Temp >=", cfg.get("AUTOH", "OFF_TEMP", 20.0), lambda v: cfg.set("AUTOH", "OFF_TEMP", v)),
             FloatField("Off Valve <", cfg.get("AUTOH", "OFF_VALVE_LEVEL", 6.0), lambda v: cfg.set("AUTOH", "OFF_VALVE_LEVEL", v)),
             FloatField("On Temp <", cfg.get("AUTOH", "ON_TEMP", 17.0), lambda v: cfg.set("AUTOH", "ON_TEMP", v)),
             FloatField("On Valve >", cfg.get("AUTOH", "ON_VALVE_LEVEL", 8.0), lambda v: cfg.set("AUTOH", "ON_VALVE_LEVEL", v)),
         ]),
-        Menu("PID Config", [
+        Menu("PID", [
+            Action("Reset PID state", pid.reset),
             FloatField("Prop. Gain (Kp)", cfg.get("PID", "KP", 0.05), 
                        lambda v: cfg.set("PID", "KP", v), 
                        precision=5), 
@@ -201,6 +202,13 @@ def initialize_services():
         weather_device_type=str(cfg.get("CCU3", "WEATHER_DEVTYPE", "HmIP-SWO"))
     )
     
+    # --- Instantiate OpenTherm Manager ---
+    logger.info("Initialising OpenTherm Manager...")
+    uart = HWUART()
+    ot_controller = OpenThermController(uart)
+    opentherm = OpenThermManager(ot_controller)
+    logger.info("OpenTherm Manager initialised.")
+
     # --- Instantiate Message Server ---
     # Could make port configurable later if needed
     message_server = MessageServer(port=23) 
@@ -215,14 +223,14 @@ def initialize_services():
         ki=cfg.get("PID", "KI", 0.002),
         kd=cfg.get("PID", "KD", 0.01),
         setpoint=cfg.get("PID", "SETPOINT", 25.0),
-        output_min=35.0, # Keep hardcoded or load if needed
+        output_min=cfg.get("PID", "MIN_HEATING_SETPOINT", 35.0),
         output_max=cfg.get("OT", "MAX_HEATING_SETPOINT", 72.0), # Get OT max heating SP
         integral_min=None, # Keep default for now
         integral_max=None, # Keep default for now
         ff_wind_coeff=cfg.get("PID", "FF_WIND_COEFF", 0.1),
         ff_temp_coeff=cfg.get("PID", "FF_TEMP_COEFF", 1.1),
         ff_sun_coeff=cfg.get("PID", "FF_SUN_COEFF", 0.0001),
-        ff_wind_interaction_coeff=cfg.get("PID", "FF_WIND_INTERACTION_COEFF", 0.008),
+        ff_wind_chill_coeff=cfg.get("PID", "FF_WIND_CHILL_COEFF", 0.008),
         base_temp_ref_outside=cfg.get("PID", "BASE_TEMP_REF_OUTSIDE", 10.0),
         base_temp_boiler=cfg.get("PID", "BASE_TEMP_BOILER", 45.0),
         valve_input_min=cfg.get("PID", "VALVE_MIN", 8.0),
@@ -231,6 +239,12 @@ def initialize_services():
         output_deadband=cfg.get("PID", "OUTPUT_DEADBAND", 0.5)
     )
     logger.info("PID Controller instantiated.")
+
+    # --- Instantiate Heating Controller ---
+    logger.info("Instantiating Heating Controller...")
+    heating_controller = HeatingController(cfg, hm, pid, opentherm)
+    logger.info("Heating Controller instantiated.")
+
     logger.info("Services initialised.")
     # Return manager and services, including the new message_server
-    return cfg, wifi, hm, pid, message_server
+    return cfg, wifi, hm, pid, message_server, heating_controller

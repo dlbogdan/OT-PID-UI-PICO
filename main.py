@@ -25,7 +25,7 @@ from managers.gui import GUIManager
 from main_tasks import (
     wifi_task, led_task, homematic_task, poll_buttons_task,
     error_rate_limiter_task, main_status_task,
-    pid_control_task, log_pid_output_task, log_memory_task, message_server_task # Import the new tasks
+    log_pid_output_task, log_memory_task, message_server_task, heating_controller_task # Import the new tasks
 )
 
 DEVELOPMENT_MODE=1
@@ -34,7 +34,7 @@ DEVELOPMENT_MODE=1
 #  Background task registration
 # --------------------------------------------------------------------------- #
 
-def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid, cfg, message_server, wdt):
+def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid, cfg, message_server, wdt, heating_controller):
     # Tasks are now imported from main_tasks.py
     tasks_to_schedule = [
         wifi_task(wifi), 
@@ -43,7 +43,7 @@ def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid, cfg, message_se
         poll_buttons_task(hid), 
         main_status_task(hm, wifi, led),
         error_rate_limiter_task(hm, wifi, led),
-        pid_control_task(pid, hm, ot_manager, cfg),
+        heating_controller_task(heating_controller),
         log_pid_output_task(pid),
         log_memory_task(), # Add memory logging task
         message_server_task(message_server), # Add message server task
@@ -61,10 +61,10 @@ def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid, cfg, message_se
 async def main():  # noqa: C901 (Complexity will be reduced)
     # Initialization 
     try:
-        display, led, buttons, opentherm = initialize_hardware()
-        cfg, wifi, homematic, pid, message_server = initialize_services() 
+        display, led, buttons = initialize_hardware()
+        cfg, wifi, homematic, pid, message_server, heating_controller = initialize_services() 
         gui = GUIManager(display, buttons) 
-        setup_gui(gui, cfg, wifi, homematic, opentherm)
+        setup_gui(gui, cfg, wifi, homematic, heating_controller._ot, pid, heating_controller)
 
         # Initialize Hardware Watchdog Timer (8 seconds timeout)
         logger.info("Initializing Hardware Watchdog (8s timeout)...")
@@ -77,7 +77,9 @@ async def main():  # noqa: C901 (Complexity will be reduced)
     loop = asyncio.get_event_loop()
     try:
         # Pass the wdt instance created above
-        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons, pid=pid, cfg=cfg, message_server=message_server, wdt=wdt)
+        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=heating_controller._ot, 
+                      hid=buttons, pid=pid, cfg=cfg, message_server=message_server, wdt=wdt,
+                      heating_controller=heating_controller)
     except Exception as e:
         logger.fatal("Scheduling tasks", str(e),resetmachine=not DEVELOPMENT_MODE)
         
