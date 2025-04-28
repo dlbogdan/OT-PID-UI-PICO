@@ -182,6 +182,7 @@ class OpenThermController():
             except Exception as e:
                 # Log the line that caused the error, if available
                 logger.error(f"Error in OTGW UART reader processing line '{line}': {e}")
+                gc.collect()
                 # Consider more robust error handling, maybe reset UART?
                 await uasyncio.sleep(5) # Avoid tight loop on persistent error
 
@@ -336,9 +337,11 @@ class OpenThermController():
 
             except uasyncio.TimeoutError:
                 logger.warning(f"Timeout waiting for response to command: {cmd_code}")
+                gc.collect()
                 return OTGW_RESPONSE_TIMEOUT, None
             except Exception as e:
                 logger.error(f"Error sending command {cmd_code}: {e}")
+                gc.collect()
                 return OTGW_RESPONSE_UNKNOWN, None
             finally:
                 # Clean up the event for this specific command instance

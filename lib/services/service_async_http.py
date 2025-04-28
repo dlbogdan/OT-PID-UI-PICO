@@ -206,7 +206,7 @@ class JsonRpcClient:
         # --- Error Handling ---
         except asyncio.TimeoutError:
             logger.error(f"AsyncJsonRpcClient Error: Request timed out after {self.timeout}s (overall or during specific read/write)")
-            return 504, {}, "Request Timeout"
+            raise NetworkError("Request Timeout")
         except OSError as e:
             # Handle specific connection errors etc.
             errno_val = e.args[0]

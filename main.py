@@ -10,6 +10,7 @@ main.py
 import utime as time
 import uasyncio as asyncio
 import uos
+from machine import WDT
 # Import initialization functions
 from managers.manager_logger import Logger
 from flags import DEBUG
@@ -33,12 +34,12 @@ DEVELOPMENT_MODE=1
 #  Background task registration
 # --------------------------------------------------------------------------- #
 
-def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid, cfg, message_server):
+def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid, cfg, message_server, wdt):
     # Tasks are now imported from main_tasks.py
     tasks_to_schedule = [
         wifi_task(wifi), 
         led_task(led), 
-        homematic_task(hm),
+        homematic_task(hm, wdt),
         poll_buttons_task(hid), 
         main_status_task(hm, wifi, led),
         error_rate_limiter_task(hm, wifi, led),
@@ -64,12 +65,19 @@ async def main():  # noqa: C901 (Complexity will be reduced)
         cfg, wifi, homematic, pid, message_server = initialize_services() 
         gui = GUIManager(display, buttons) 
         setup_gui(gui, cfg, wifi, homematic, opentherm)
+
+        # Initialize Hardware Watchdog Timer (8 seconds timeout)
+        logger.info("Initializing Hardware Watchdog (8s timeout)...")
+        wdt = WDT(timeout=8000)
+        logger.info("Watchdog Initialized.")
+
     except Exception as e: # Catch init errors
         logger.fatal("Initialization", str(e),resetmachine=not DEVELOPMENT_MODE)
     # Start Async Event Loop and Schedule Tasks
     loop = asyncio.get_event_loop()
     try:
-        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons, pid=pid, cfg=cfg, message_server=message_server)
+        # Pass the wdt instance created above
+        schedule_tasks(loop, wifi=wifi, hm=homematic, led=led, ot_manager=opentherm, hid=buttons, pid=pid, cfg=cfg, message_server=message_server, wdt=wdt)
     except Exception as e:
         logger.fatal("Scheduling tasks", str(e),resetmachine=not DEVELOPMENT_MODE)
         

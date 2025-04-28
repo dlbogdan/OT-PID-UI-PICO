@@ -31,11 +31,12 @@ async def led_task(led):
         await asyncio.sleep_ms(100)
 
 
-async def homematic_task(hm):
+async def homematic_task(hm, wdt):
     while True:
         try:
             gc.collect() # Collect garbage
             hm.update()
+            wdt.feed() # Feed watchdog
         except Exception as e:  # noqa: BLE001
             logger.error(f"HM: {e}")
         await asyncio.sleep(5)
@@ -137,18 +138,19 @@ async def _sync_pid_params(cfg_mgr, pid):
         return 
 
     # Call setters unconditionally. The setter itself handles the tolerance check.
-    pid.set_kp(cfg_mgr.get("PID", "KP", 0.05))
-    pid.set_ki(cfg_mgr.get("PID", "KI", 0.002))
-    pid.set_kd(cfg_mgr.get("PID", "KD", 0.01))
-    pid.set_setpoint(cfg_mgr.get("PID", "SETPOINT", 25.0))
-    pid.set_valve_input_min(cfg_mgr.get("PID", "VALVE_MIN", 8.0))
-    pid.set_valve_input_max(cfg_mgr.get("PID", "VALVE_MAX", 70.0))
+    pid.set_kp(cfg_mgr.get("PID", "KP", 0.5))
+    pid.set_ki(cfg_mgr.get("PID", "KI", 0.0005))
+    pid.set_kd(cfg_mgr.get("PID", "KD", 0.02))
+    pid.set_setpoint(cfg_mgr.get("PID", "SETPOINT", 10.0))
+    pid.set_valve_input_min(cfg_mgr.get("PID", "VALVE_MIN", 1.0))
+    pid.set_valve_input_max(cfg_mgr.get("PID", "VALVE_MAX", 100.0))
     pid.set_ff_wind_coeff(cfg_mgr.get("PID", "FF_WIND_COEFF", 0.1))
     pid.set_ff_temp_coeff(cfg_mgr.get("PID", "FF_TEMP_COEFF", 1.1))
     pid.set_ff_sun_coeff(cfg_mgr.get("PID", "FF_SUN_COEFF", 0.0001))
     pid.set_ff_wind_interaction_coeff(cfg_mgr.get("PID", "FF_WIND_INTERACTION_COEFF", 0.008))
     pid.set_base_temp_ref_outside(cfg_mgr.get("PID", "BASE_TEMP_REF_OUTSIDE", 10.0))
-    pid.set_base_temp_boiler(cfg_mgr.get("PID", "BASE_TEMP_BOILER", 45.0))
+    pid.set_base_temp_boiler(cfg_mgr.get("PID", "BASE_TEMP_BOILER", 41.0))
+    pid.set_output_deadband(cfg_mgr.get("PID", "OUTPUT_DEADBAND", 0.5)) # Default 0.5
 
 
 async def _handle_auto_heating(cfg_mgr, pid, hm, ot_manager):
@@ -165,10 +167,10 @@ async def _handle_auto_heating(cfg_mgr, pid, hm, ot_manager):
     current_temp = hm.temperature
     avg_level = hm.avg_active_valve
     # Use cfg_mgr.get directly for float values
-    off_temp = cfg_mgr.get("AUTOH", "OFF_TEMP", 20.0) 
-    off_valve = cfg_mgr.get("AUTOH", "OFF_VALVE_LEVEL", 6.0)
-    on_temp = cfg_mgr.get("AUTOH", "ON_TEMP", 17.0)
-    on_valve = cfg_mgr.get("AUTOH", "ON_VALVE_LEVEL", 8.0)
+    off_temp = cfg_mgr.get("AUTOH", "OFF_TEMP", 19.0) 
+    off_valve = cfg_mgr.get("AUTOH", "OFF_VALVE_LEVEL", 5.0)
+    on_temp = cfg_mgr.get("AUTOH", "ON_TEMP", 15.0)
+    on_valve = cfg_mgr.get("AUTOH", "ON_VALVE_LEVEL", 12.0)
 
     if current_ch_state: # Currently ON? Check OFF conditions
         if current_temp is not None and current_temp >= off_temp:

@@ -227,7 +227,8 @@ def initialize_services():
         base_temp_boiler=cfg.get("PID", "BASE_TEMP_BOILER", 45.0),
         valve_input_min=cfg.get("PID", "VALVE_MIN", 8.0),
         valve_input_max=cfg.get("PID", "VALVE_MAX", 70.0),
-        time_factor=1.0 # Use real-time for actual operation
+        time_factor=1.0, # Use real-time for actual operation
+        output_deadband=cfg.get("PID", "OUTPUT_DEADBAND", 0.5)
     )
     logger.info("PID Controller instantiated.")
     logger.info("Services initialised.")

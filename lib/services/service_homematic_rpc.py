@@ -4,6 +4,7 @@ from services.service_async_http import JsonRpcClient, NetworkError
 import time
 import ujson
 from managers.manager_logger import Logger
+import gc
 #todo: getters for avg_active_valve and max_active_valve etc would be nice
 logger = Logger()
 
@@ -741,11 +742,15 @@ class HomematicDataService:
             self._paused = True # Set internal flag to prevent new fetches
             self._valve_device_list = None # Clear cache
             self._weather_sensor = None
+            # Optionally trigger garbage collection immediately
+            gc.collect()
             return False # Indicate failure and let the task end naturally
         except Exception as e:
             logger.error(f"HomematicService: General Exception during fetch_data: {e}")
             self._valve_device_list = None # Clear cache on any exception
             self._weather_sensor = None
+            # import gc # <<< ADD
+            gc.collect() # <<< ADD
             return False
 
     def is_fetching(self):
