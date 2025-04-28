@@ -10,7 +10,9 @@ if __name__ == "__main__":
     setpoint_init = 25.0
 
     pid = PIDController(kp=kp_init, ki=ki_init, kd=kd_init, setpoint=setpoint_init, 
-                      output_min=35, output_max=75, ff_temp_coeff=1.1,
+                      output_min=35, output_max=75, 
+                      integral_accumulation_range=5.0,  # Maximum temperature range the integral term can affect
+                      ff_temp_coeff=1.1,
                       ff_wind_chill_coeff=0.008,
                       valve_input_min=8.0, valve_input_max=70.0,
                       ff_sun_coeff=0.0001, time_factor=60) # Use the reduced value in example too
@@ -58,3 +60,17 @@ if __name__ == "__main__":
     max_valve = 65.0 # Simulate high demand after reset
     boiler_temp = pid.update(max_valve, wind, outside_t, sun)
     print(f"Loop 9 (Post-Reset): MaxValve={max_valve:.1f}%, Wind={wind}km/h, Temp={outside_t}C, Sun={sun}lux => Boiler Temp: {boiler_temp:.2f} C")
+
+    # Test Ki transition from 0 to non-zero
+    print("\n--- Testing Ki Transition ---")
+    print("Setting Ki to 0...")
+    pid.set_ki(0.0)
+    boiler_temp = pid.update(max_valve, wind, outside_t, sun)
+    print(f"With Ki=0: MaxValve={max_valve:.1f}% => Boiler Temp: {boiler_temp:.2f} C")
+    print(f"Integral Limits: [{pid._integral_min}, {pid._integral_max}]")
+    
+    print("\nSetting Ki back to non-zero...")
+    pid.set_ki(0.001)
+    boiler_temp = pid.update(max_valve, wind, outside_t, sun)
+    print(f"With Ki=0.001: MaxValve={max_valve:.1f}% => Boiler Temp: {boiler_temp:.2f} C")
+    print(f"Integral Limits: [{pid._integral_min}, {pid._integral_max}]")

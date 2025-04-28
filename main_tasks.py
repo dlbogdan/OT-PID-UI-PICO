@@ -167,7 +167,9 @@ async def _sync_pid_params(cfg_mgr, pid):
     pid.set_ff_wind_chill_coeff(cfg_mgr.get("PID", "FF_WIND_CHILL_COEFF", 0.008))
     pid.set_base_temp_ref_outside(cfg_mgr.get("PID", "BASE_TEMP_REF_OUTSIDE", 10.0))
     pid.set_base_temp_boiler(cfg_mgr.get("PID", "BASE_TEMP_BOILER", 41.0))
-    pid.set_output_deadband(cfg_mgr.get("PID", "OUTPUT_DEADBAND", 0.5)) # Default 0.5
+    pid.set_output_deadband(cfg_mgr.get("PID", "OUTPUT_DEADBAND", 0.5))
+    # Maximum temperature range (±°C) that the integral term can affect
+    pid.set_integral_accumulation_range(cfg_mgr.get("PID", "INTEGRAL_ACCUMULATION_RANGE", 5.0))
 
 
 async def _handle_auto_heating(cfg_mgr, pid, hm, ot_manager):
@@ -295,6 +297,9 @@ async def _handle_heating_control(cfg_mgr, pid, hm, ot_manager):
     actual_heating_state = ot_manager.is_ch_enabled()
     if target_heating_state != actual_heating_state:
         logger.info(f"State Change: Setting CH from {actual_heating_state} to {target_heating_state}")
+        # Reset PID state on any heating state transition
+        logger.info("Heating state changing: Resetting PID state")
+        pid.reset()
         ot_manager.set_central_heating(target_heating_state)
     
     # === Apply Determined Control Setpoint ===

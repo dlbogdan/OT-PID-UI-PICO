@@ -190,6 +190,7 @@ DEFAULT_FACTORY_CONFIG = {
         "FF_SUN_COEFF": 0.0001,
         "BASE_TEMP_REF_OUTSIDE": 10.0,
         "BASE_TEMP_BOILER": 45.0,
+        "INTEGRAL_ACCUMULATION_RANGE": 5.0,  # Maximum temperature range the integral term can affect
     }
 }
 # ------------------------------------

@@ -18,7 +18,7 @@ class PIDController:
     """
     def __init__(self, kp, ki, kd, setpoint=10.0, 
                  output_min=35.0, output_max=70.0, 
-                 integral_min=None, integral_max=None,
+                 integral_accumulation_range=None,
                  ff_wind_coeff=0.1, ff_temp_coeff=1.0, ff_sun_coeff=0.0001,
                  ff_wind_chill_coeff=0.005, # How much more wind matters when colder
                  base_temp_ref_outside=10.0, base_temp_boiler=41.0,
@@ -35,8 +35,7 @@ class PIDController:
             setpoint (float): Target maximum eTRV valve opening (%). Default: 40.0.
             output_min (float): Minimum boiler temperature output (deg C). Default: 30.0.
             output_max (float): Maximum boiler temperature output (deg C). Default: 80.0.
-            integral_min (float, optional): Minimum limit for the integral term accumulator.
-            integral_max (float, optional): Maximum limit for the integral term accumulator.
+            integral_accumulation_range (float, optional): Maximum temperature range the integral term can affect.
             ff_wind_coeff (float): Feed-forward coefficient for wind speed (degC per km/h).
             ff_temp_coeff (float): Feed-forward coefficient for outside temperature (degC per degC difference).
             ff_sun_coeff (float): Feed-forward coefficient for sun illumination (degC reduction per lux).
@@ -56,18 +55,21 @@ class PIDController:
         self.output_min = output_min
         self.output_max = output_max
 
-        # Calculate default integral limits if not provided
+        # Calculate integral limits based on accumulation range
         if ki != 0:
-            default_integral_range = abs((output_max - output_min) * 0.5 / ki) # Clever windup prevention 
-                                                                               # by ensuring the maximum temperature
-                                                                               # contribution is half of the 
-                                                                               # output range  
-            self._integral_min = integral_min if integral_min is not None else -default_integral_range
-            self._integral_max = integral_max if integral_max is not None else default_integral_range
+            if integral_accumulation_range is None:
+                # Default to half the output range if not specified
+                integral_accumulation_range = (output_max - output_min) * 0.5
+            
+            # Convert temperature range to integral accumulator range
+            self._integral_range = integral_accumulation_range / ki
+            self._integral_min = -self._integral_range
+            self._integral_max = self._integral_range
         else:
-            # If Ki is zero, integral limits are irrelevant unless explicitly set
-            self._integral_min = integral_min 
-            self._integral_max = integral_max
+            # If Ki is zero, integral limits are irrelevant
+            self._integral_range = None
+            self._integral_min = None
+            self._integral_max = None
 
         # Feed-forward parameters
         self.ff_wind_coeff = ff_wind_coeff
@@ -138,10 +140,20 @@ class PIDController:
         if abs(self.ki - ki) > _FLOAT_TOLERANCE:
             logger.info(f"PID Ki updated from {self.ki} to: {ki}")
             self.ki = ki
-            # Potentially recalculate default integral limits if Ki changed significantly?
-            # Or maybe reset integral term? Add logic here if needed.
-            if self.ki == 0:
-                 self._integral = 0.0 # Reset integral if Ki becomes 0
+            # Recalculate integral limits when Ki changes from 0 to non-zero
+            if abs(self.ki) > _FLOAT_TOLERANCE:  # Ki is now non-zero
+                if self._integral_range is None:
+                    # Default to half the output range if not specified
+                    self._integral_range = (self.output_max - self.output_min) * 0.5
+                # Convert temperature range to integral accumulator range
+                self._integral_range = self._integral_range / ki
+                self._integral_min = -self._integral_range
+                self._integral_max = self._integral_range
+            else:  # Ki is now zero
+                self._integral = 0.0  # Reset integral
+                self._integral_range = None
+                self._integral_min = None
+                self._integral_max = None
 
     def set_kd(self, kd):
         """Sets the Derivative gain (Kd)."""
@@ -218,6 +230,30 @@ class PIDController:
             logger.info(f"PID output_deadband updated from {self.output_deadband} to: {deadband}")
             self.output_deadband = deadband
 
+    def set_integral_accumulation_range(self, range_value):
+        """Sets the integral accumulation range and recalculates integral limits."""
+        if range_value <= 0:
+            logger.error(f"Invalid integral_accumulation_range ({range_value}): must be positive")
+            return
+
+        if self._integral_range is None or abs(range_value - (self._integral_range * self.ki if self.ki != 0 else float('inf'))) > _FLOAT_TOLERANCE:
+            logger.info(f"PID integral_accumulation_range updated to: {range_value}")
+            
+            if abs(self.ki) > _FLOAT_TOLERANCE:  # Only set limits if Ki is non-zero
+                # Convert temperature range to integral accumulator range
+                self._integral_range = range_value / self.ki
+                self._integral_min = -self._integral_range
+                self._integral_max = self._integral_range
+                
+                # Clamp existing integral value to new limits
+                if self._integral is not None:
+                    self._integral = max(self._integral_min, min(self._integral, self._integral_max))
+            else:
+                # Store the range for later use if Ki becomes non-zero
+                self._integral_range = range_value
+                self._integral_min = None
+                self._integral_max = None
+
     def _calculate_feed_forward(self, wind_speed, outside_temp, sun_illumination):
         """Calculates the feed-forward base boiler temperature, including wind interaction."""
         # Temperature adjustment (colder outside -> higher boiler temp)
@@ -288,8 +324,13 @@ class PIDController:
             if dt <= 0:
                 dt = 1e-6 
             
+            # Clamp dt to reasonable values to prevent integral windup from large time gaps
+            MAX_DT = 60.0  # Maximum 60 seconds for integral accumulation
+            dt_for_integral = min(dt, MAX_DT)
+            
             # Apply time acceleration factor for simulation
             simulated_dt = dt * self.time_factor
+            simulated_dt_for_integral = dt_for_integral * self.time_factor
             
             self._last_time_ref = current_time_ref # Store current time reference for the next calculation
             # --- End Time Calculation ---
@@ -303,7 +344,7 @@ class PIDController:
             p_term = self.kp * error
 
             # Integral term 
-            integral_change = error * simulated_dt
+            integral_change = error * simulated_dt_for_integral
             old_integral = self._integral
             self._integral += integral_change
             logger.debug(f"PID Integral Update: Adding {integral_change:.4f} to {old_integral:.4f} -> {self._integral:.4f}")

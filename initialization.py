@@ -60,14 +60,6 @@ def setup_gui(gui, cfg, wifi, hm, ot_manager, pid, heating_controller):
     """Builds the menu structure and sets up GUI modes."""
     logger.info("Setting up GUI...")
     
-    def save_and_reboot():
-        gui.display.show_message("Action", "Saving & Reboot")
-        if not cfg.save_config(): # Try one last save
-            logger.error("Failed to save config before reboot.")
-        else:
-            logger.info("Config saved before reboot.")
-        time.sleep(1)
-        reset()
 
     # --- Build Menu Structure --- # 
     menu_items = [
@@ -112,10 +104,13 @@ def setup_gui(gui, cfg, wifi, hm, ot_manager, pid, heating_controller):
             FloatField("Deriv. Gain (Kd)", cfg.get("PID", "KD", 0.01), 
                        lambda v: cfg.set("PID", "KD", v), 
                        precision=5),
+            FloatField("Integral Range", cfg.get("PID", "INTEGRAL_ACCUMULATION_RANGE", 5.0), 
+                       lambda v: cfg.set("PID", "INTEGRAL_ACCUMULATION_RANGE", v),
+                       precision=2),
             FloatField("Setpoint (Valve%)", cfg.get("PID", "SETPOINT", 25.0), 
                        lambda v: cfg.set("PID", "SETPOINT", v)),
-            FloatField("Valve Min %", cfg.get("PID", "VALVE_MIN", 8.0), lambda v: cfg.set("PID", "VALVE_MIN", v)),
-            FloatField("Valve Max %", cfg.get("PID", "VALVE_MAX", 70.0), lambda v: cfg.set("PID", "VALVE_MAX", v)),
+            FloatField("Valve Min %", cfg.get("PID", "VALVE_MIN", 0.0), lambda v: cfg.set("PID", "VALVE_MIN", v)),
+            FloatField("Valve Max %", cfg.get("PID", "VALVE_MAX", 100.0), lambda v: cfg.set("PID", "VALVE_MAX", v)),
             FloatField("FF Wind Coeff", cfg.get("PID", "FF_WIND_COEFF", 0.1), lambda v: cfg.set("PID", "FF_WIND_COEFF", v)),
             FloatField("FF Temp Coeff", cfg.get("PID", "FF_TEMP_COEFF", 1.1), lambda v: cfg.set("PID", "FF_TEMP_COEFF", v)),
             FloatField("FF Sun Coeff", cfg.get("PID", "FF_SUN_COEFF", 0.0001), lambda v: cfg.set("PID", "FF_SUN_COEFF", v)),
@@ -127,7 +122,6 @@ def setup_gui(gui, cfg, wifi, hm, ot_manager, pid, heating_controller):
             Action("View Log", lambda: gui.switch_mode("logview")),
             Action("Reset Error limiter", logger.reset_error_rate_limiter),
             Action("Reboot Device", reset),
-            Action("Save & Reboot", save_and_reboot),
             Action("Factory defaults", lambda: factory_reset(gui.display, gui.led, cfg, hm)),
         ]),
     ]
@@ -225,8 +219,7 @@ def initialize_services():
         setpoint=cfg.get("PID", "SETPOINT", 25.0),
         output_min=cfg.get("PID", "MIN_HEATING_SETPOINT", 35.0),
         output_max=cfg.get("OT", "MAX_HEATING_SETPOINT", 72.0), # Get OT max heating SP
-        integral_min=None, # Keep default for now
-        integral_max=None, # Keep default for now
+        integral_accumulation_range=cfg.get("PID", "INTEGRAL_ACCUMULATION_RANGE", 5.0),
         ff_wind_coeff=cfg.get("PID", "FF_WIND_COEFF", 0.1),
         ff_temp_coeff=cfg.get("PID", "FF_TEMP_COEFF", 1.1),
         ff_sun_coeff=cfg.get("PID", "FF_SUN_COEFF", 0.0001),
