@@ -1,15 +1,19 @@
+"""
+Initialization module for OT-PID-UI-PICO.
+"""
+
 import utime as time
 from machine import reset
 
 # Project modules
 from platform_spec import (
     HWi2c, HWMCP, HWLCD, HWRGBLed, HWButtons, HWUART,
-    unique_hardware_name, ConfigFileName
+    unique_hardware_name, ConfigFileName, factory_reset
 )
 from controllers.controller_display import DisplayController
 from controllers.controller_otgw import OpenThermController
 from controllers.controller_heating import HeatingController
-from managers.manager_config import ConfigManager, factory_reset
+from managers.manager_config import ConfigManager
 from managers.manager_wifi import WiFiManager
 from managers.manager_otgw import OpenThermManager
 from services.service_homematic_rpc import HomematicDataService
@@ -21,7 +25,17 @@ from managers.gui import (
 from flags import DEVELOPMENT_MODE
 from managers.manager_logger import Logger
 from controllers.controller_pid import PIDController
+from controllers.controller_feedforward import FeedforwardController
 from services.service_messageserver import MessageServer
+from platform_spec import (
+    DEFAULT_OT_MAX_HEATING_SETPOINT, DEFAULT_OT_MANUAL_HEATING_SETPOINT, DEFAULT_OT_DHW_SETPOINT,
+    DEFAULT_OT_ENABLE_CONTROLLER, DEFAULT_OT_ENABLE_HEATING, DEFAULT_OT_ENABLE_DHW, DEFAULT_OT_ENFORCE_DHW_SETPOINT,
+    DEFAULT_AUTOH_ENABLE, DEFAULT_AUTOH_OFF_TEMP, DEFAULT_AUTOH_OFF_VALVE_LEVEL, DEFAULT_AUTOH_ON_TEMP, DEFAULT_AUTOH_ON_VALVE_LEVEL,
+    DEFAULT_PID_KP, DEFAULT_PID_KI, DEFAULT_PID_KD, DEFAULT_PID_SETPOINT, DEFAULT_PID_MIN_HEATING_SETPOINT,
+    DEFAULT_PID_VALVE_MIN, DEFAULT_PID_VALVE_MAX, DEFAULT_PID_FF_WIND_COEFF, DEFAULT_PID_FF_TEMP_COEFF,
+    DEFAULT_PID_FF_SUN_COEFF, DEFAULT_PID_FF_WIND_CHILL_COEFF, DEFAULT_PID_BASE_TEMP_REF_OUTSIDE,
+    DEFAULT_PID_BASE_TEMP_BOILER, DEFAULT_PID_OUTPUT_DEADBAND, DEFAULT_PID_INTEGRAL_ACCUMULATION_RANGE
+)
 
 logger = Logger()
 
@@ -30,17 +44,17 @@ logger = Logger()
 #  Hardware Initialisation
 # --------------------------------------------------------------------------- #
 
-def initialize_hardware():
+def initialize_hardware(cfg):
     """Initialise I²C bus, peripherals and OpenTherm driver."""
     
     logger.info("Initialising hardware...")
     
-    i2c = HWi2c()
-    mcp = HWMCP(i2c)
-    lcd = HWLCD(mcp)
+    i2c = HWi2c(cfg)
+    mcp = HWMCP(i2c, cfg)
+    lcd = HWLCD(mcp, cfg)
     display = DisplayController(lcd)
-    led = HWRGBLed(mcp)
-    buttons = HWButtons(mcp)
+    led = HWRGBLed(mcp, cfg)
+    buttons = HWButtons(mcp, cfg)
     
     logger.info("Hardware initialised.")
     
@@ -76,53 +90,66 @@ def setup_gui(gui, cfg, wifi, hm, ot_manager, pid, heating_controller):
             Action("Rescan", hm.force_rescan),
         ]),
         Menu("OpenTherm", [
-            FloatField("Max Heating SP", cfg.get("OT", "MAX_HEATING_SETPOINT", 72.0), lambda v: cfg.set("OT", "MAX_HEATING_SETPOINT", v)),
-            FloatField("Manual Heating SP", cfg.get("OT", "MANUAL_HEATING_SETPOINT", 55.0), lambda v: cfg.set("OT", "MANUAL_HEATING_SETPOINT", v)),
-            FloatField("DHW Setpoint", cfg.get("OT", "DHW_SETPOINT", 50.0), lambda v: cfg.set("OT", "DHW_SETPOINT", v)),
-            BoolField("Takeover Control", cfg.get("OT", "ENABLE_CONTROLLER", False), lambda v: cfg.set("OT", "ENABLE_CONTROLLER", v)),
-            BoolField("Enable Heating", cfg.get("OT", "ENABLE_HEATING", False), lambda v: cfg.set("OT", "ENABLE_HEATING", v)), # Manual heating enable
-            BoolField("Enable DHW", cfg.get("OT", "ENABLE_DHW", True), lambda v: cfg.set("OT", "ENABLE_DHW", v)),
-            BoolField("Enforce DHW SP", cfg.get("OT", "ENFORCE_DHW_SETPOINT", False), lambda v: cfg.set("OT", "ENFORCE_DHW_SETPOINT", v)),
+            FloatField("Max Heating SP", cfg.get("OT", "MAX_HEATING_SETPOINT", DEFAULT_OT_MAX_HEATING_SETPOINT), lambda v: cfg.set("OT", "MAX_HEATING_SETPOINT", v)),
+            FloatField("Manual Heating SP", cfg.get("OT", "MANUAL_HEATING_SETPOINT", DEFAULT_OT_MANUAL_HEATING_SETPOINT), lambda v: cfg.set("OT", "MANUAL_HEATING_SETPOINT", v)),
+            FloatField("DHW Setpoint", cfg.get("OT", "DHW_SETPOINT", DEFAULT_OT_DHW_SETPOINT), lambda v: cfg.set("OT", "DHW_SETPOINT", v)),
+            BoolField("Takeover Control", cfg.get("OT", "ENABLE_CONTROLLER", DEFAULT_OT_ENABLE_CONTROLLER), lambda v: cfg.set("OT", "ENABLE_CONTROLLER", v)),
+            BoolField("Enable Heating", cfg.get("OT", "ENABLE_HEATING", DEFAULT_OT_ENABLE_HEATING), lambda v: cfg.set("OT", "ENABLE_HEATING", v)),
+            BoolField("Enable DHW", cfg.get("OT", "ENABLE_DHW", DEFAULT_OT_ENABLE_DHW), lambda v: cfg.set("OT", "ENABLE_DHW", v)),
+            BoolField("Enforce DHW SP", cfg.get("OT", "ENFORCE_DHW_SETPOINT", DEFAULT_OT_ENFORCE_DHW_SETPOINT), lambda v: cfg.set("OT", "ENFORCE_DHW_SETPOINT", v)),
         ]),
         Menu("Auto Heating", [
             Action("Trigger Turn ON", heating_controller.trigger_heating_on),
             Action("Trigger Turn OFF", heating_controller.trigger_heating_off),
-            BoolField("Enable Auto", cfg.get("AUTOH", "ENABLE", True), lambda v: cfg.set("AUTOH", "ENABLE", v)),
-            FloatField("Off Temp >=", cfg.get("AUTOH", "OFF_TEMP", 20.0), lambda v: cfg.set("AUTOH", "OFF_TEMP", v)),
-            FloatField("Off Valve <", cfg.get("AUTOH", "OFF_VALVE_LEVEL", 6.0), lambda v: cfg.set("AUTOH", "OFF_VALVE_LEVEL", v)),
-            FloatField("On Temp <", cfg.get("AUTOH", "ON_TEMP", 17.0), lambda v: cfg.set("AUTOH", "ON_TEMP", v)),
-            FloatField("On Valve >", cfg.get("AUTOH", "ON_VALVE_LEVEL", 8.0), lambda v: cfg.set("AUTOH", "ON_VALVE_LEVEL", v)),
+            BoolField("Enable Auto", cfg.get("AUTOH", "ENABLE", DEFAULT_AUTOH_ENABLE), lambda v: cfg.set("AUTOH", "ENABLE", v)),
+            FloatField("Off Temp >=", cfg.get("AUTOH", "OFF_TEMP", DEFAULT_AUTOH_OFF_TEMP), lambda v: cfg.set("AUTOH", "OFF_TEMP", v)),
+            FloatField("Off Valve <", cfg.get("AUTOH", "OFF_VALVE_LEVEL", DEFAULT_AUTOH_OFF_VALVE_LEVEL), lambda v: cfg.set("AUTOH", "OFF_VALVE_LEVEL", v)),
+            FloatField("On Temp <", cfg.get("AUTOH", "ON_TEMP", DEFAULT_AUTOH_ON_TEMP), lambda v: cfg.set("AUTOH", "ON_TEMP", v)),
+            FloatField("On Valve >", cfg.get("AUTOH", "ON_VALVE_LEVEL", DEFAULT_AUTOH_ON_VALVE_LEVEL), lambda v: cfg.set("AUTOH", "ON_VALVE_LEVEL", v)),
         ]),
         Menu("PID", [
             Action("Reset PID state", pid.reset),
-            FloatField("Prop. Gain (Kp)", cfg.get("PID", "KP", 0.05), 
+            FloatField("Prop. Gain (Kp)", cfg.get("PID", "KP", DEFAULT_PID_KP), 
                        lambda v: cfg.set("PID", "KP", v), 
                        precision=5), 
-            FloatField("Integ. Gain (Ki)", cfg.get("PID", "KI", 0.002), 
+            FloatField("Integ. Gain (Ki)", cfg.get("PID", "KI", DEFAULT_PID_KI), 
                        lambda v: cfg.set("PID", "KI", v), 
                        precision=5),
-            FloatField("Deriv. Gain (Kd)", cfg.get("PID", "KD", 0.01), 
+            FloatField("Deriv. Gain (Kd)", cfg.get("PID", "KD", DEFAULT_PID_KD), 
                        lambda v: cfg.set("PID", "KD", v), 
                        precision=5),
-            FloatField("Integral Range", cfg.get("PID", "INTEGRAL_ACCUMULATION_RANGE", 5.0), 
+            FloatField("Integral Range", cfg.get("PID", "INTEGRAL_ACCUMULATION_RANGE", DEFAULT_PID_INTEGRAL_ACCUMULATION_RANGE), 
                        lambda v: cfg.set("PID", "INTEGRAL_ACCUMULATION_RANGE", v),
                        precision=2),
-            FloatField("Setpoint (Valve%)", cfg.get("PID", "SETPOINT", 25.0), 
+            FloatField("Setpoint (Valve%)", cfg.get("PID", "SETPOINT", DEFAULT_PID_SETPOINT), 
                        lambda v: cfg.set("PID", "SETPOINT", v)),
-            FloatField("Valve Min %", cfg.get("PID", "VALVE_MIN", 0.0), lambda v: cfg.set("PID", "VALVE_MIN", v)),
-            FloatField("Valve Max %", cfg.get("PID", "VALVE_MAX", 100.0), lambda v: cfg.set("PID", "VALVE_MAX", v)),
-            FloatField("FF Wind Coeff", cfg.get("PID", "FF_WIND_COEFF", 0.1), lambda v: cfg.set("PID", "FF_WIND_COEFF", v)),
-            FloatField("FF Temp Coeff", cfg.get("PID", "FF_TEMP_COEFF", 1.1), lambda v: cfg.set("PID", "FF_TEMP_COEFF", v)),
-            FloatField("FF Sun Coeff", cfg.get("PID", "FF_SUN_COEFF", 0.0001), lambda v: cfg.set("PID", "FF_SUN_COEFF", v)),
-            FloatField("FF Wind Interact", cfg.get("PID", "FF_WIND_INTERACTION_COEFF", 0.008), lambda v: cfg.set("PID", "FF_WIND_INTERACTION_COEFF", v), precision=4),
-            FloatField("Base Temp Outside", cfg.get("PID", "BASE_TEMP_REF_OUTSIDE", 10.0), lambda v: cfg.set("PID", "BASE_TEMP_REF_OUTSIDE", v)),
-            FloatField("Base Temp Boiler", cfg.get("PID", "BASE_TEMP_BOILER", 45.0), lambda v: cfg.set("PID", "BASE_TEMP_BOILER", v)),
+            FloatField("Valve Min %", cfg.get("PID", "VALVE_MIN", DEFAULT_PID_VALVE_MIN), 
+                       lambda v: cfg.set("PID", "VALVE_MIN", v)),
+            FloatField("Valve Max %", cfg.get("PID", "VALVE_MAX", DEFAULT_PID_VALVE_MAX), 
+                       lambda v: cfg.set("PID", "VALVE_MAX", v)),
+            FloatField("Output Deadband", cfg.get("PID", "OUTPUT_DEADBAND", DEFAULT_PID_OUTPUT_DEADBAND), 
+                       lambda v: cfg.set("PID", "OUTPUT_DEADBAND", v)),
+        ]),
+        Menu("Feedforward", [
+            FloatField("Wind Coeff", cfg.get("FEEDFORWARD", "WIND_COEFF", DEFAULT_PID_FF_WIND_COEFF), 
+                       lambda v: cfg.set("FEEDFORWARD", "WIND_COEFF", v)),
+            FloatField("Temp Coeff", cfg.get("FEEDFORWARD", "TEMP_COEFF", DEFAULT_PID_FF_TEMP_COEFF), 
+                       lambda v: cfg.set("FEEDFORWARD", "TEMP_COEFF", v)),
+            FloatField("Sun Coeff", cfg.get("FEEDFORWARD", "SUN_COEFF", DEFAULT_PID_FF_SUN_COEFF), 
+                       lambda v: cfg.set("FEEDFORWARD", "SUN_COEFF", v)),
+            FloatField("Wind Interact", cfg.get("FEEDFORWARD", "WIND_CHILL_COEFF", DEFAULT_PID_FF_WIND_CHILL_COEFF), 
+                       lambda v: cfg.set("FEEDFORWARD", "WIND_CHILL_COEFF", v), 
+                       precision=4),
+            FloatField("Base Temp Outside", cfg.get("FEEDFORWARD", "BASE_TEMP_REF_OUTSIDE", DEFAULT_PID_BASE_TEMP_REF_OUTSIDE), 
+                       lambda v: cfg.set("FEEDFORWARD", "BASE_TEMP_REF_OUTSIDE", v)),
+            FloatField("Base Temp Boiler", cfg.get("FEEDFORWARD", "BASE_TEMP_BOILER", DEFAULT_PID_BASE_TEMP_BOILER), 
+                       lambda v: cfg.set("FEEDFORWARD", "BASE_TEMP_BOILER", v)),
         ]),
         Menu("Device", [
             Action("View Log", lambda: gui.switch_mode("logview")),
             Action("Reset Error limiter", logger.reset_error_rate_limiter),
             Action("Reboot Device", reset),
-            Action("Factory defaults", lambda: factory_reset(gui.display, gui.led, cfg, hm)),
+            Action("Factory defaults", lambda: factory_reset(gui.display, gui.led)),
         ]),
     ]
 
@@ -180,7 +207,7 @@ def setup_gui(gui, cfg, wifi, hm, ot_manager, pid, heating_controller):
 def initialize_services():
     """Initialises configuration manager, loads config, and sets up services."""
     logger.info("Initialising services...")
-    cfg = ConfigManager(ConfigFileName(), ConfigFileName(factory=True))
+    cfg = ConfigManager(ConfigFileName())
     
     # --- Instantiate Core Services ---
     wifi = WiFiManager(
@@ -198,44 +225,47 @@ def initialize_services():
     
     # --- Instantiate OpenTherm Manager ---
     logger.info("Initialising OpenTherm Manager...")
-    uart = HWUART()
+    uart = HWUART(cfg)
     ot_controller = OpenThermController(uart)
     opentherm = OpenThermManager(ot_controller)
     logger.info("OpenTherm Manager initialised.")
 
     # --- Instantiate Message Server ---
-    # Could make port configurable later if needed
     message_server = MessageServer(port=23) 
-    # Inject the server into the existing logger instance
     logger.set_message_server(message_server)
 
     # --- Instantiate PID Controller ---
     logger.info("Instantiating PID Controller...")
     pid = PIDController(
-        # Use cfg_mgr.get directly - type hint in ConfigManager should help linter
-        kp=cfg.get("PID", "KP", 0.05), 
-        ki=cfg.get("PID", "KI", 0.002),
-        kd=cfg.get("PID", "KD", 0.01),
-        setpoint=cfg.get("PID", "SETPOINT", 25.0),
-        output_min=cfg.get("PID", "MIN_HEATING_SETPOINT", 35.0),
-        output_max=cfg.get("OT", "MAX_HEATING_SETPOINT", 72.0), # Get OT max heating SP
-        integral_accumulation_range=cfg.get("PID", "INTEGRAL_ACCUMULATION_RANGE", 5.0),
-        ff_wind_coeff=cfg.get("PID", "FF_WIND_COEFF", 0.1),
-        ff_temp_coeff=cfg.get("PID", "FF_TEMP_COEFF", 1.1),
-        ff_sun_coeff=cfg.get("PID", "FF_SUN_COEFF", 0.0001),
-        ff_wind_chill_coeff=cfg.get("PID", "FF_WIND_CHILL_COEFF", 0.008),
-        base_temp_ref_outside=cfg.get("PID", "BASE_TEMP_REF_OUTSIDE", 10.0),
-        base_temp_boiler=cfg.get("PID", "BASE_TEMP_BOILER", 45.0),
-        valve_input_min=cfg.get("PID", "VALVE_MIN", 8.0),
-        valve_input_max=cfg.get("PID", "VALVE_MAX", 70.0),
-        time_factor=1.0, # Use real-time for actual operation
-        output_deadband=cfg.get("PID", "OUTPUT_DEADBAND", 0.5)
+        kp=cfg.get("PID", "KP", DEFAULT_PID_KP), 
+        ki=cfg.get("PID", "KI", DEFAULT_PID_KI),
+        kd=cfg.get("PID", "KD", DEFAULT_PID_KD),
+        setpoint=cfg.get("PID", "SETPOINT", DEFAULT_PID_SETPOINT),
+        output_min=cfg.get("PID", "MIN_HEATING_SETPOINT", DEFAULT_PID_MIN_HEATING_SETPOINT),
+        output_max=cfg.get("OT", "MAX_HEATING_SETPOINT", DEFAULT_OT_MAX_HEATING_SETPOINT),
+        integral_accumulation_range=cfg.get("PID", "INTEGRAL_ACCUMULATION_RANGE", DEFAULT_PID_INTEGRAL_ACCUMULATION_RANGE),
+        valve_input_min=cfg.get("PID", "VALVE_MIN", DEFAULT_PID_VALVE_MIN),
+        valve_input_max=cfg.get("PID", "VALVE_MAX", DEFAULT_PID_VALVE_MAX),
+        time_factor=1.0,
+        output_deadband=cfg.get("PID", "OUTPUT_DEADBAND", DEFAULT_PID_OUTPUT_DEADBAND)
     )
     logger.info("PID Controller instantiated.")
 
+    # --- Instantiate Feedforward Controller ---
+    logger.info("Instantiating Feedforward Controller...")
+    feedforward = FeedforwardController(
+        wind_coeff=cfg.get("FEEDFORWARD", "WIND_COEFF", DEFAULT_PID_FF_WIND_COEFF),
+        temp_coeff=cfg.get("FEEDFORWARD", "TEMP_COEFF", DEFAULT_PID_FF_TEMP_COEFF),
+        sun_coeff=cfg.get("FEEDFORWARD", "SUN_COEFF", DEFAULT_PID_FF_SUN_COEFF),
+        wind_chill_coeff=cfg.get("FEEDFORWARD", "WIND_CHILL_COEFF", DEFAULT_PID_FF_WIND_CHILL_COEFF),
+        base_temp_ref_outside=cfg.get("FEEDFORWARD", "BASE_TEMP_REF_OUTSIDE", DEFAULT_PID_BASE_TEMP_REF_OUTSIDE),
+        base_temp_boiler=cfg.get("FEEDFORWARD", "BASE_TEMP_BOILER", DEFAULT_PID_BASE_TEMP_BOILER)
+    )
+    logger.info("Feedforward Controller instantiated.")
+
     # --- Instantiate Heating Controller ---
     logger.info("Instantiating Heating Controller...")
-    heating_controller = HeatingController(cfg, hm, pid, opentherm)
+    heating_controller = HeatingController(cfg, hm, opentherm, pid, feedforward)
     logger.info("Heating Controller instantiated.")
 
     logger.info("Services initialised.")

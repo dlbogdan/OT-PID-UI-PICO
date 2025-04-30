@@ -2,8 +2,6 @@ import uos
 import time
 # Use standard json module
 import json
-from machine import reset
-from platform_spec import DEFAULT_FACTORY_CONFIG
 from managers.manager_logger import Logger
 # Import Any for type hinting
 from typing import Any
@@ -13,9 +11,8 @@ logger = Logger()
 # --- Configuration Management ---
 class ConfigManager:
     """Handles reading/writing config using JSON format."""
-    def __init__(self, filename_config:str, filename_factory:str):
+    def __init__(self, filename_config:str):
         self.filename_config = filename_config
-        self.filename_factory = filename_factory
         self.config = {} # Holds the parsed config (dict of dicts with types)
         self._load_config()
 
@@ -77,67 +74,3 @@ class ConfigManager:
                  logger.error(f"Failed to save config after setting {section}.{key}")
             # else: logger.debug(f"set_value: Value for {section}.{key} changed.")
         # else: logger.debug(f"set_value: Value for {section}.{key} unchanged.")
-
-# --- Factory Reset Function ---
-def factory_reset(display, led, config_manager, hm_service):
-    """Performs a factory reset: deletes cache, restores config from defaults (JSON), reboots."""
-    factory_config_file = config_manager.filename_factory
-    config_file = config_manager.filename_config
-    cache_file = "hm_device_cache.json" 
-
-    logger.info("--- Factory Reset Initiated ---")
-    if display: display.show_message("Factory Reset", "Working...")
-    if led: led.direct_send_color("blue")
-
-    # 1. Delete Homematic Device Cache
-    try:
-        uos.remove(cache_file)
-        logger.info(f"Deleted cache file: {cache_file}")
-    except OSError as e:
-        if e.args[0] == 2: # errno.ENOENT
-             logger.warning(f"Cache file not found (already deleted?): {cache_file}")
-        else:
-             logger.error(f"Error deleting cache file {cache_file}: {e}")
-             if display: display.show_message("Reset Error", "Cache delete fail")
-             time.sleep(3)
-             # Continue even if cache delete fails?
-
-    # 2. Ensure factory defaults are written to config_factory.json (if it doesn't exist)
-    #    We'll always write the current defaults to the factory file, then copy.
-    logger.info(f"Writing current factory defaults to {factory_config_file}...")
-    try:
-        with open(factory_config_file, 'w') as f_factory:
-            # Use positional arguments only for MicroPython compatibility
-            json.dump(DEFAULT_FACTORY_CONFIG, f_factory) # No keyword args
-        logger.info(f"Successfully wrote factory defaults to {factory_config_file}")
-    except Exception as e_write_factory:
-        logger.error(f"FATAL: Could not write factory config {factory_config_file}: {e_write_factory}")
-        if display: display.show_message("Reset Error", "Factory write")
-        time.sleep(3)
-        return # Stop
-
-    # 3. Copy config_factory.json to config.json
-    logger.info(f"Copying {factory_config_file} to {config_file}...")
-    try:
-        # Simple buffered copy (might not be most efficient for large files, but fine here)
-        with open(factory_config_file, 'r') as f_source, open(config_file, 'w') as f_dest:
-            while True:
-                chunk = f_source.read(128) 
-                if not chunk:
-                    break
-                f_dest.write(chunk)
-        logger.info(f"Successfully copied factory config to {config_file}")
-
-        # 4. Final steps before reboot
-        logger.info("Factory reset complete. Rebooting in 5 seconds...")
-        if display: display.show_message("Factory Reset", "OK. Rebooting...")
-        if led: led.direct_send_color("green")
-        time.sleep(5)
-        reset() 
-
-    except Exception as e_copy:
-        logger.error(f"FATAL: Error copying factory config: {e_copy}")
-        if display: display.show_message("Reset Error", "Config copy fail")
-        if led: led.direct_send_color("red")
-        time.sleep(3)
-        return

@@ -20,6 +20,8 @@ from initialization import initialize_hardware, initialize_services, setup_gui
 # 3rd‑party / project modules
 
 from managers.gui import GUIManager
+from managers.manager_config import ConfigManager
+from platform_spec import ConfigFileName
 
 # Import tasks from the new file
 from main_tasks import (
@@ -59,10 +61,20 @@ def schedule_tasks(loop, *, wifi, hm, led, ot_manager, hid, pid, cfg, message_se
 # --------------------------------------------------------------------------- #
 
 async def main():  # noqa: C901 (Complexity will be reduced)
-    # Initialization 
+    # Initialize Config First
     try:
-        display, led, buttons = initialize_hardware()
-        cfg, wifi, homematic, pid, message_server, heating_controller = initialize_services() 
+        logger.info("Initializing configuration...")
+        cfg = ConfigManager(ConfigFileName())
+        logger.info("Configuration initialized.")
+    except Exception as e:
+        logger.fatal("Config initialization failed", str(e), resetmachine=not DEVELOPMENT_MODE)
+        return
+
+    # Initialize Hardware with Config
+    try:
+        display, led, buttons = initialize_hardware(cfg)
+        # Initialize remaining services
+        wifi, homematic, pid, message_server, heating_controller = initialize_services()[1:]  # Skip cfg return
         gui = GUIManager(display, buttons) 
         setup_gui(gui, cfg, wifi, homematic, heating_controller._ot, pid, heating_controller)
 
@@ -72,7 +84,9 @@ async def main():  # noqa: C901 (Complexity will be reduced)
         logger.info("Watchdog Initialized.")
 
     except Exception as e: # Catch init errors
-        logger.fatal("Initialization", str(e),resetmachine=not DEVELOPMENT_MODE)
+        logger.fatal("Initialization", str(e), resetmachine=not DEVELOPMENT_MODE)
+        return
+
     # Start Async Event Loop and Schedule Tasks
     loop = asyncio.get_event_loop()
     try:
@@ -81,7 +95,8 @@ async def main():  # noqa: C901 (Complexity will be reduced)
                       hid=buttons, pid=pid, cfg=cfg, message_server=message_server, wdt=wdt,
                       heating_controller=heating_controller)
     except Exception as e:
-        logger.fatal("Scheduling tasks", str(e),resetmachine=not DEVELOPMENT_MODE)
+        logger.fatal("Scheduling tasks", str(e), resetmachine=not DEVELOPMENT_MODE)
+        return
         
     # Main Loop
     try:
@@ -90,7 +105,7 @@ async def main():  # noqa: C901 (Complexity will be reduced)
     except KeyboardInterrupt:
         logger.warning("KeyboardInterrupt received, shutting down...")
     except Exception as e:
-        logger.fatal("MainLoopError", str(e),resetmachine=not DEVELOPMENT_MODE)
+        logger.fatal("MainLoopError", str(e), resetmachine=not DEVELOPMENT_MODE)
     finally:
         logger.info("Performing shutdown cleanup...")
         display.clear()

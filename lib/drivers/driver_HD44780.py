@@ -14,7 +14,24 @@ LCD_SETDDRAMADDR = 0x80
 # --- LCD Class Definition --- 
 class LCD1602(LCD):
     def __init__(self, rw_pin, rs_pin, en_pin, d4_pin, d5_pin, d6_pin, d7_pin, cols=16, rows=2):
-        """Initialize with Pin-compatible objects for each LCD pin."""
+        """Initialize with Pin-compatible objects for each LCD pin.
+        
+        The driver is compatible with both machine.Pin and McpPin objects,
+        as it only uses the standard value() method interface. This allows
+        the driver to work with both direct GPIO pins and MCP23017 pins
+        without any modification.
+        
+        Args:
+            rw_pin: Read/Write pin (machine.Pin or McpPin)
+            rs_pin: Register Select pin (machine.Pin or McpPin)
+            en_pin: Enable pin (machine.Pin or McpPin)
+            d4_pin: Data pin 4 (machine.Pin or McpPin)
+            d5_pin: Data pin 5 (machine.Pin or McpPin)
+            d6_pin: Data pin 6 (machine.Pin or McpPin)
+            d7_pin: Data pin 7 (machine.Pin or McpPin)
+            cols: Number of display columns (default: 16)
+            rows: Number of display rows (default: 2)
+        """
         super().__init__(cols, rows)
         self.rw_pin = rw_pin
         self.rs_pin = rs_pin
