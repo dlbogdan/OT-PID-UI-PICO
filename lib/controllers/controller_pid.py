@@ -94,6 +94,7 @@ class PIDController:
         
         self._previous_error = error
         
+        logger.debug(f"PID terms: Integral={self._integral:.3f}, P={p_term:.3f}, I={i_term:.3f}, D={d_term:.3f}")
         return p_term + i_term + d_term
 
     def update(self, current_level):
@@ -142,15 +143,15 @@ class PIDController:
         # Calculate PID output
         pid_output = self._calculate_pid(error, dt)
         
-        # Apply output limits
-        self.last_output = max(self.output_min, min(pid_output, self.output_max))
+        # Apply output limits #NOT TO THE PID ITSELF
+        # self.last_output = max(self.output_min, min(pid_output, self.output_max))
+        self.last_output = pid_output
+        # Apply deadband to reduce unnecessary small changes  not to pid itself though #todo
+        # if self.last_applied_output is not None:
+        #     if abs(self.last_output - self.last_applied_output) <= self.output_deadband:
+        #         return self.last_applied_output
         
-        # Apply deadband to reduce unnecessary small changes
-        if self.last_applied_output is not None:
-            if abs(self.last_output - self.last_applied_output) <= self.output_deadband:
-                return self.last_applied_output
-        
-        self.last_applied_output = self.last_output
+        # self.last_applied_output = self.last_output
         return self.last_output
 
     # Getter methods

@@ -264,7 +264,15 @@ def initialize_services(cfg):
 
     # --- Instantiate Heating Controller ---
     logger.info("Instantiating Heating Controller...")
-    heating_controller = HeatingController(cfg, hm, opentherm, pid, feedforward)
+    heating_controller = HeatingController(
+        cfg,
+        cfg.get("PID", "MIN_HEATING_SETPOINT", DEFAULT_PID_MIN_HEATING_SETPOINT),
+        cfg.get("OT", "MAX_HEATING_SETPOINT", DEFAULT_OT_MAX_HEATING_SETPOINT),
+        hm, 
+        opentherm, 
+        pid, 
+        feedforward
+    )
     logger.info("Heating Controller instantiated.")
 
     logger.info("Services initialised.")

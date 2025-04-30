@@ -72,7 +72,7 @@ class FeedforwardController:
             sun_compensation = -(sun_illumination * self.sun_coeff)
             
             # Combine all effects
-            ff_output = temp_compensation + wind_effect + sun_compensation
+            ff_output = self.base_temp_boiler + temp_compensation + wind_effect + sun_compensation
             
             logger.debug(f"FF Calc: Temp={temp_diff:.2f}, Wind={wind_effect:.2f}, Sun={sun_compensation:.2f}")
             return ff_output

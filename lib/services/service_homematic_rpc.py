@@ -282,6 +282,8 @@ class HomematicDataService:
         self.avg_valve = 0.0
         self.max_valve = 0.0
         self.avg_active_valve = 0.0 # NEW: Average for active valves
+        self.active_valve_count = 0
+        self.sum_valve_positions = 0.0
         # Store the identified valve devices to avoid rediscovery
         self._valve_device_list = None # List of dicts: {'iface': str, 'addr': str, 'room_name': str}
         self.max_valve_room_name = "Unknown" # Room corresponding to max_valve
@@ -559,6 +561,8 @@ class HomematicDataService:
             self.max_valve = 0.0
             self.max_valve_room_name = "Unknown"
             self.avg_active_valve = 0.0 # Reset active average too
+            self.active_valve_count = 0
+            self.sum_valve_positions = 0.0
             return True
         
         logger.info(f"HomematicService: Fetching levels for {len(valve_list_to_process)} valve devices...")
@@ -604,17 +608,23 @@ class HomematicDataService:
             self.max_valve = max_position * 100.0
             self.max_valve_room_name = current_max_room_name
             # NEW: Calculate active average
+            
             if active_report_count > 0:
                 self.avg_active_valve = (total_active_position / active_report_count) * 100.0
+                self.active_valve_count = active_report_count
+                self.sum_valve_positions = total_position
             else:
                 self.avg_active_valve = 0.0
+                self.active_valve_count = 0
+                self.sum_valve_positions = 0.0
         else:
             self.reporting_valves = current_valve_reporting
             self.avg_valve = current_avg_valve
             self.max_valve = current_max_valve 
             self.max_valve_room_name = current_max_room
             self.avg_active_valve = 0.0 # Reset if no reporting valves at all
-
+            self.active_valve_count = 0
+            self.sum_valve_positions = 0.0
         if fetch_error_occurred:
             logger.warning("HomematicService: Clearing cached valve list due to fetch error(s).")
             self._valve_device_list = None

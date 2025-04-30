@@ -16,7 +16,7 @@ class HeatingController:
     HeatingController manages central heating decisions based on configured
     mode (auto or manual) and conditions like temperature, valve openings.
     """
-    def __init__(self, config_manager, homematic_service, ot_manager, pid_controller, feedforward_controller):
+    def __init__(self, config_manager, output_min, output_max, homematic_service, ot_manager, pid_controller, feedforward_controller):
         """
         Initialize the HeatingController.
         
@@ -32,7 +32,8 @@ class HeatingController:
         self._pid = pid_controller
         self._ot = ot_manager
         self._feedforward = feedforward_controller
-        
+        self._output_min = output_min
+        self._output_max = output_max
         # State flags
         self._force_on_next_cycle = False
         self._force_off_next_cycle = False
@@ -272,9 +273,24 @@ class HeatingController:
         # Combine outputs
         final_output = pid_output + ff_output
         logger.info(f"Combined Output: PID={pid_output:.2f} + FF={ff_output:.2f} = {final_output:.2f}")
-        
+        logger.debug(f"Active valve count: {self._hm.active_valve_count}")
+        logger.debug(f"Avg valve: {self._hm.avg_valve}")
+        logger.debug(f"Max valve: {self._hm.max_valve}")
+        logger.debug(f"Avg active valve: {self._hm.avg_active_valve}")
+        logger.debug(f"Sum valve positions: {self._hm.sum_valve_positions}")
+        # Add check for active_valve_count and reporting_valves to prevent ZeroDivisionError in debug log
+        if self._hm.active_valve_count > 0 and self._hm.reporting_valves > 0:
+            debug_calc_val = self._hm.sum_valve_positions / self._hm.reporting_valves * (self._hm.reporting_valves / self._hm.active_valve_count) ** 0.3
+            logger.debug(f"sum(valve_positions)/reporting_valves * (reporting_valves/active_valve_count)^0.3: {debug_calc_val:.3f}")
+        else:
+            logger.debug(f"sum(...) calculation skipped (active_valve_count={self._hm.active_valve_count}, reporting_valves={self._hm.reporting_valves})")
+
         # Apply output limits
-        final_output = max(self._pid.get_output_min(), min(final_output, self._pid.get_output_max()))
+        # final_output = max(self._pid.get_output_min(), min(final_output, self._pid.get_output_max()))
+        final_output = max(self._output_min, min(final_output, self._output_max))
+        #round to 0.5
+        final_output = round(final_output * 2) / 2
+        logger.debug(f"Final output: {final_output:.2f}")
         return final_output
 
     def _handle_auto_heating(self):
