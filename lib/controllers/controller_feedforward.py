@@ -48,23 +48,38 @@ class FeedforwardController:
         Returns:
             float: The calculated feed-forward compensation value in °C
         """
-        # Base temperature adjustment from outside temperature difference
-        temp_diff = self.base_temp_ref_outside - outside_temp
-        temp_compensation = temp_diff * self.temp_coeff
-        
-        # Enhanced wind compensation based on temperature difference
-        wind_effect = wind_speed * self.wind_coeff
-        if temp_diff > 0:  # Only enhance wind effect when colder than reference
-            wind_effect *= (1.0 + temp_diff * self.wind_chill_coeff)
+        # Skip calculation if we don't have valid weather data yet
+        if outside_temp is None or wind_speed is None or sun_illumination is None:
+            logger.debug("FF Calc: Skipping - No data from hm sensors yet")
+            return 0.0
             
-        # Solar gain compensation (reduces required temperature)
-        sun_compensation = -(sun_illumination * self.sun_coeff)
-        
-        # Combine all effects
-        ff_output = self.base_temp_boiler + temp_compensation + wind_effect + sun_compensation
-        
-        logger.debug(f"FF Calc: Temp={temp_compensation:.2f}, Wind={wind_effect:.2f}, Sun={sun_compensation:.2f}")
-        return ff_output
+        try:
+            # Convert inputs to float, but don't provide defaults
+            outside_temp = float(outside_temp)
+            wind_speed = float(wind_speed) if wind_speed is not None else 0.0
+            sun_illumination = float(sun_illumination) if sun_illumination is not None else 0.0
+            
+            # Base temperature adjustment from outside temperature difference
+            temp_diff = outside_temp - self.base_temp_ref_outside  # Reversed to make it positive when warmer
+            temp_compensation = -temp_diff * self.temp_coeff  # Negative because warmer outside = less heating needed
+            
+            # Enhanced wind compensation based on temperature difference
+            wind_effect = wind_speed * self.wind_coeff
+            if temp_diff < 0:  # Only enhance wind effect when colder than reference
+                wind_effect *= (1.0 + abs(temp_diff) * self.wind_chill_coeff)
+                
+            # Solar gain compensation (reduces required temperature)
+            sun_compensation = -(sun_illumination * self.sun_coeff)
+            
+            # Combine all effects
+            ff_output = temp_compensation + wind_effect + sun_compensation
+            
+            logger.debug(f"FF Calc: Temp={temp_diff:.2f}, Wind={wind_effect:.2f}, Sun={sun_compensation:.2f}")
+            return ff_output
+            
+        except (ValueError, TypeError) as e:
+            logger.warning(f"FF Calc: Error processing values - {e}")
+            return 0.0
     
     def set_wind_coeff(self, coeff):
         """Sets the feed-forward coefficient for wind speed."""

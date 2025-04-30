@@ -8,7 +8,7 @@ and conditions (temperature, valve openings).
 
 from managers.manager_logger import Logger
 from controllers.controller_feedforward import FeedforwardController
-
+from platform_spec import DEFAULT_OT_SETPOINT_TOLERANCE, DEFAULT_OT_OFF_SETPOINT  #todo: move this to some initialization
 logger = Logger()
 
 class HeatingController:
@@ -72,7 +72,7 @@ class HeatingController:
         if dhw_enabled and self._config.get("OT", "ENFORCE_DHW_SETPOINT"):
             desired_dhw_sp = self._config.get("OT", "DHW_SETPOINT")
             actual_dhw_sp = self._ot.get_dhw_setpoint()
-            tolerance = self._config.get("OT", "SETPOINT_TOLERANCE")
+            tolerance = self._config.get("OT", "SETPOINT_TOLERANCE",DEFAULT_OT_SETPOINT_TOLERANCE)
             if abs(desired_dhw_sp - actual_dhw_sp) > tolerance:
                 logger.info(f"SYNC (Enforced): Setting DHW Setpoint from {actual_dhw_sp} to {desired_dhw_sp}")
                 self._ot.set_dhw_setpoint(desired_dhw_sp)
@@ -128,6 +128,11 @@ class HeatingController:
         if not self._ot.is_active():
             logger.debug("Takeover OFF: Skipping heating control actions.")
             return
+
+        # Check boiler connection before proceeding
+        if not self._ot.is_boiler_connected():
+            logger.debug("Boiler not connected: Skipping heating control actions.")
+            return
             
         # Determine mode
         auto_heat_enabled = self._config.get("AUTOH", "ENABLE")
@@ -151,7 +156,10 @@ class HeatingController:
         # Apply the determined control setpoint
         if target_heating_state:
             actual_control_setpoint = self._ot.get_control_setpoint()
-            tolerance = self._config.get("OT", "SETPOINT_TOLERANCE")
+            if actual_control_setpoint is None:
+                logger.debug("Boiler not ready. Control setpoint from boiler is None: Skipping heating control actions.")
+                return
+            tolerance = self._config.get("OT", "SETPOINT_TOLERANCE",DEFAULT_OT_SETPOINT_TOLERANCE)
             if abs(target_setpoint - actual_control_setpoint) > tolerance:
                 logger.info(f"Applying Control Setpoint: {target_setpoint:.2f} (Previous: {actual_control_setpoint})")
                 self._ot.set_control_setpoint(target_setpoint)
@@ -159,9 +167,12 @@ class HeatingController:
                 logger.debug(f"Control Setpoint unchanged: {target_setpoint:.2f}")
         else:  # Heating is OFF, ensure control setpoint is low
             actual_control_setpoint = self._ot.get_control_setpoint()
-            default_off_sp = self._config.get("OT", "DEFAULT_OFF_SETPOINT")
-            tolerance = self._config.get("OT", "SETPOINT_TOLERANCE")
-            if actual_control_setpoint is None or abs(actual_control_setpoint - default_off_sp) > tolerance:
+            if actual_control_setpoint is None:
+                logger.debug("Boiler not ready. Control setpoint from boiler is None: Skipping heating control actions.")
+                return
+            default_off_sp = self._config.get("OT", "OFF_SETPOINT", DEFAULT_OT_OFF_SETPOINT)
+            tolerance = self._config.get("OT", "SETPOINT_TOLERANCE", DEFAULT_OT_SETPOINT_TOLERANCE)
+            if abs(actual_control_setpoint - default_off_sp) > tolerance:
                 logger.info(f"Heating OFF, ensuring Control Setpoint is {default_off_sp} (was {actual_control_setpoint})")
                 self._ot.set_control_setpoint(default_off_sp)
     
@@ -191,14 +202,12 @@ class HeatingController:
         Returns:
             bool: True if heating should be disabled
         """
+        # Reload config values each time to ensure we have the latest
         off_temp = self._config.get("AUTOH", "OFF_TEMP")
         off_valve = self._config.get("AUTOH", "OFF_VALVE_LEVEL")
 
-        if current_temp is not None and current_temp >= off_temp:
-            logger.info(f"AutoHeat: Condition met to disable heating (Temp {current_temp:.1f}C >= {off_temp:.1f}C)")
-            return True
-        elif avg_level is not None and avg_level < off_valve:
-            logger.info(f"AutoHeat: Condition met to disable heating (Avg Valve {avg_level:.1f}% < {off_valve:.1f}%)")
+        if (current_temp is not None and (current_temp >= off_temp)) or (avg_level is not None and (avg_level < off_valve)):
+            logger.info(f"AutoHeat: Condition met to disable heating (Temp {current_temp:.1f}C >= {off_temp:.1f}C or Avg Valve {avg_level:.1f}% < {off_valve:.1f}%)")
             return True
         return False
 
@@ -212,15 +221,12 @@ class HeatingController:
         Returns:
             bool: True if heating should be enabled
         """
+        # Reload config values each time to ensure we have the latest
         on_temp = self._config.get("AUTOH", "ON_TEMP")
         on_valve = self._config.get("AUTOH", "ON_VALVE_LEVEL")
 
-        if current_temp is not None and avg_level is not None:
-            if current_temp < on_temp and avg_level > on_valve:
-                logger.info(f"AutoHeat: Condition met to enable heating (Temp {current_temp:.1f}C < {on_temp:.1f}C AND Avg Valve {avg_level:.1f}% > {on_valve:.1f}%)")
-                return True
-        elif current_temp is None and avg_level is not None and avg_level > on_valve:
-            logger.info(f"AutoHeat: Enabling heating based on valve level ({avg_level:.1f}%) as temp is unavailable.")
+        if (current_temp is not None and (current_temp < on_temp)) and (avg_level is not None and (avg_level > on_valve)):
+            logger.info(f"AutoHeat: Condition met to enable heating (Temp {current_temp:.1f}C < {on_temp:.1f}C and Avg Valve {avg_level:.1f}% > {on_valve:.1f}%)")
             return True
         return False
 
@@ -238,17 +244,30 @@ class HeatingController:
 
         # Get current conditions
         current_level = self._hm.avg_active_valve
-        current_temp = self._hm.temperature if self._hm.temperature is not None else self._feedforward.base_temp_ref_outside
-        current_wind = self._hm.wind_speed if self._hm.wind_speed is not None else 0.0
-        current_sun = self._hm.illumination if self._hm.illumination is not None else 0.0
+        current_temp = self._hm.temperature
+        current_wind = self._hm.wind_speed 
+        current_sun = self._hm.illumination
+        
+        # Fall back to manual heating if we don't have sensor data
+        if current_level is None or current_temp is None:
+            logger.warning("Missing essential sensor data (valve/temp), falling back to manual heating setpoint")
+            target_setpoint = self._config.get("OT", "MANUAL_HEATING_SETPOINT")
+            return target_setpoint
         
         # Calculate PID output
         pid_output = self._pid.update(current_level)
+        if pid_output is None:
+            logger.warning("PID output is None (possibly after reset), using minimum output")
+            pid_output = self._pid.get_output_min()
         logger.info(f"PID Update: current_level(valve)={current_level:.1f} -> BoilerTemp={pid_output:.2f}")
         
-        # Calculate feedforward compensation
-        ff_output = self._feedforward.calculate(current_wind, current_temp, current_sun)
-        logger.info(f"FF Update: Wind={current_wind:.1f}, Temp={current_temp:.1f}, Sun={current_sun:.0f} -> Compensation={ff_output:.2f}")
+        # Calculate feedforward compensation if we have weather data
+        if current_temp is not None and current_wind is not None and current_sun is not None:
+            ff_output = self._feedforward.calculate(current_wind, current_temp, current_sun)
+            logger.info(f"FF Update: Wind={current_wind:.1f}, Temp={current_temp:.1f}, Sun={current_sun:.0f} -> Compensation={ff_output:.2f}")
+        else:
+            logger.debug("Missing some weather data, skipping feedforward compensation")
+            ff_output = 0.0
         
         # Combine outputs
         final_output = pid_output + ff_output
@@ -263,7 +282,7 @@ class HeatingController:
         logger.debug("MODE: Automatic Heating/PID")
         
         # Default values
-        default_off_sp = self._config.get("OT", "DEFAULT_OFF_SETPOINT")
+        default_off_sp = self._config.get("OT", "OFF_SETPOINT", DEFAULT_OT_OFF_SETPOINT) #todo: move this to some initialization
         target_heating_state = False
         target_setpoint = default_off_sp
         
@@ -297,7 +316,7 @@ class HeatingController:
         """Determines target state and setpoint for Manual Heating mode."""
         logger.debug("MODE: Manual Heating Control")
         
-        default_off_sp = self._config.get("OT", "DEFAULT_OFF_SETPOINT")
+        default_off_sp = self._config.get("OT", "OFF_SETPOINT", DEFAULT_OT_OFF_SETPOINT) #todo: move this to some initialization
         target_heating_state = False  # Default state is OFF
         target_setpoint = default_off_sp
 

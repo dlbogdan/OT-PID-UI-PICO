@@ -21,7 +21,7 @@ from initialization import initialize_hardware, initialize_services, setup_gui
 
 from managers.gui import GUIManager
 from managers.manager_config import ConfigManager
-from platform_spec import ConfigFileName
+from platform_spec import ConfigFileName, factory_reset
 
 # Import tasks from the new file
 from main_tasks import (
@@ -67,14 +67,15 @@ async def main():  # noqa: C901 (Complexity will be reduced)
         cfg = ConfigManager(ConfigFileName())
         logger.info("Configuration initialized.")
     except Exception as e:
-        logger.fatal("Config initialization failed", str(e), resetmachine=not DEVELOPMENT_MODE)
+        factory_reset(None, None)
+        logger.fatal("Config initialization failed. Factory reset.", str(e), resetmachine=not DEVELOPMENT_MODE)
         return
 
     # Initialize Hardware with Config
     try:
         display, led, buttons = initialize_hardware(cfg)
-        # Initialize remaining services
-        wifi, homematic, pid, message_server, heating_controller = initialize_services()[1:]  # Skip cfg return
+        # Initialize remaining services using the single cfg instance
+        wifi, homematic, pid, message_server, heating_controller = initialize_services(cfg) # Pass cfg
         gui = GUIManager(display, buttons) 
         setup_gui(gui, cfg, wifi, homematic, heating_controller._ot, pid, heating_controller)
 

@@ -40,7 +40,7 @@ class PIDController:
         self.kp = kp
         self.ki = ki
         self.kd = kd
-        self.setpoint = setpoint
+        self.setpoint = setpoint 
         self.output_min = output_min
         self.output_max = output_max
         self.valve_input_min = valve_input_min
@@ -156,7 +156,7 @@ class PIDController:
     # Getter methods
     def get_output_min(self): return self.output_min
     def get_output_max(self): return self.output_max
-    
+
     # Setter methods for PID parameters
     def set_output_min(self, output_min):
         if abs(self.output_min - output_min) > _FLOAT_TOLERANCE:
@@ -175,11 +175,11 @@ class PIDController:
     def _update_integral_limits(self):
         """Update integral limits based on current settings."""
         if self.ki != 0 and self._integral_range is not None:
-            default_integral_range = abs((self.output_max - self.output_min) * 0.5 / self.ki)
-            if abs(self._integral_min - (-default_integral_range)) < _FLOAT_TOLERANCE and \
-               abs(self._integral_max - default_integral_range) < _FLOAT_TOLERANCE:
-                self._integral_min = -default_integral_range
-                self._integral_max = default_integral_range
+                default_integral_range = abs((self.output_max - self.output_min) * 0.5 / self.ki)
+                if abs(self._integral_min - (-default_integral_range)) < _FLOAT_TOLERANCE and \
+                   abs(self._integral_max - default_integral_range) < _FLOAT_TOLERANCE:
+                    self._integral_min = -default_integral_range
+                    self._integral_max = default_integral_range
                 logger.info("Recalculated integral limits due to output range change.")
 
     def set_kp(self, kp):
@@ -246,7 +246,7 @@ class PIDController:
         if self.ki == 0:
             logger.warning("Cannot set integral range when Ki=0")
             return
-        
+
         if range_value is None:
             range_value = (self.output_max - self.output_min) * 0.5
             

@@ -204,10 +204,9 @@ def setup_gui(gui, cfg, wifi, hm, ot_manager, pid, heating_controller):
 #  Service Initialisation
 # --------------------------------------------------------------------------- #
 
-def initialize_services():
-    """Initialises configuration manager, loads config, and sets up services."""
+def initialize_services(cfg):
+    """Initialises services using the provided configuration manager."""
     logger.info("Initialising services...")
-    cfg = ConfigManager(ConfigFileName())
     
     # --- Instantiate Core Services ---
     wifi = WiFiManager(
@@ -269,5 +268,5 @@ def initialize_services():
     logger.info("Heating Controller instantiated.")
 
     logger.info("Services initialised.")
-    # Return manager and services, including the new message_server
-    return cfg, wifi, hm, pid, message_server, heating_controller
+    # Return manager and services, NO LONGER RETURNING cfg
+    return wifi, hm, pid, message_server, heating_controller

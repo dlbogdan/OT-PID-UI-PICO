@@ -10,14 +10,36 @@ logger = Logger()
 
 # --- Configuration Management ---
 class ConfigManager:
-    """Handles reading/writing config using JSON format."""
+    """Handles reading/writing config using JSON format (Singleton)."""
+    _instance = None
+    _initialized = False
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self, filename_config:str):
+        if self._initialized:
+            return # Prevent re-initialization
+        logger.debug(f"Initializing ConfigManager with filename: {filename_config}")
         self.filename_config = filename_config
         self.config = {} # Holds the parsed config (dict of dicts with types)
         self._load_config()
+        self._initialized = True # Mark as initialized
 
     def _load_config(self):
         """Loads config from JSON file."""
+        # Check if filename_config is set (can happen if __new__ returns existing instance before __init__ runs)
+        if not hasattr(self, 'filename_config') or not self.filename_config:
+             # Try to get it from the instance if it was already initialized
+            if ConfigManager._instance and hasattr(ConfigManager._instance, 'filename_config'):
+                self.filename_config = ConfigManager._instance.filename_config
+            else:
+                logger.error("Cannot load config: filename_config not set.")
+                self.config = {}
+                return
+                
         try:
             with open(self.filename_config, 'r') as f:
                 loaded_data = json.load(f)
@@ -50,6 +72,9 @@ class ConfigManager:
 
     def get(self, section: str, key: str, default: Any = None) -> Any:
         """Gets value, setting default (and saving) if missing. Preserves type from load/default."""
+        # Removed reload - read directly from the in-memory cache
+        # self._load_config()
+        
         section_dict = self.config.get(section)
         
         if isinstance(section_dict, dict) and key in section_dict:

@@ -89,7 +89,7 @@ DEFAULT_OT_ENABLE_CONTROLLER = False
 DEFAULT_OT_ENABLE_HEATING = False
 DEFAULT_OT_ENABLE_DHW = True
 DEFAULT_OT_ENFORCE_DHW_SETPOINT = False
-DEFAULT_OT_DEFAULT_OFF_SETPOINT = 20.0  # Default control setpoint when heating is off
+DEFAULT_OT_OFF_SETPOINT = 20.0  # Default control setpoint when heating is off
 DEFAULT_OT_SETPOINT_TOLERANCE = 0.1  # Tolerance for setpoint comparisons
 
 # Auto Heating (AUTOH) default configuration
@@ -100,7 +100,7 @@ DEFAULT_AUTOH_ON_TEMP = 15.0
 DEFAULT_AUTOH_ON_VALVE_LEVEL = 12.0
 
 # PID Controller default configuration
-DEFAULT_PID_KP = 0.5
+DEFAULT_PID_KP = 0.2
 DEFAULT_PID_KI = 0.0005
 DEFAULT_PID_KD = 0.02
 DEFAULT_PID_SETPOINT = 10.0
@@ -182,6 +182,7 @@ def get_factory_config():
         "OT": {
             "MAX_HEATING_SETPOINT": DEFAULT_OT_MAX_HEATING_SETPOINT,
             "MANUAL_HEATING_SETPOINT": DEFAULT_OT_MANUAL_HEATING_SETPOINT,
+            "OFF_SETPOINT": DEFAULT_OT_OFF_SETPOINT, # this is the default control setpoint when CH is off
             "DHW_SETPOINT": DEFAULT_OT_DHW_SETPOINT,
             "ENABLE_CONTROLLER": DEFAULT_OT_ENABLE_CONTROLLER,
             "ENABLE_HEATING": DEFAULT_OT_ENABLE_HEATING,
