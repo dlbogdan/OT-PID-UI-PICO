@@ -93,7 +93,8 @@ class PIDController:
             d_term = 0.0
         
         self._previous_error = error
-        
+        logger.debug(f"PID setpoint: {self.setpoint}")
+        logger.debug(f"PID error: {error}")
         logger.debug(f"PID terms: Integral={self._integral:.3f}, P={p_term:.3f}, I={i_term:.3f}, D={d_term:.3f}")
         return p_term + i_term + d_term
 
@@ -115,7 +116,7 @@ class PIDController:
             
         if self._last_time_ref is None:
             self._last_time_ref = current_time
-            return self.output_min  # Return minimum on first update
+            return 0  # Return 0 on first update
             
         if _use_ticks_ms:
             dt = time.ticks_diff(int(current_time), int(self._last_time_ref)) / 1000.0  # Convert to seconds
@@ -137,8 +138,8 @@ class PIDController:
             scaled_input = ((current_level - self.valve_input_min) / 
                           (self.valve_input_max - self.valve_input_min)) * 100.0
         
-        # Calculate error
-        error = self.setpoint - scaled_input
+        # Calculate error # STUPID AI CHANGED THIS THE OTHER WAY ROUND. STOP TOUCHING THIS CODE.
+        error = scaled_input - self.setpoint 
         
         # Calculate PID output
         pid_output = self._calculate_pid(error, dt)
